@@ -4,10 +4,12 @@ from tangos.properties import LiveHaloProperties
 from tangos.properties.pynbody.centring import centred_calculation
 import pynbody, pynbody.halo
 
+import numpy as np
+
 __version__ = "0.1.0"
 
 class FlamingoInputHandler(tangos.input_handlers.pynbody.Gadget4HDFSubfindInputHandler):
-    patterns = ['flamingo_*.hdf5']
+    patterns = ['flamingo_00??.hdf5']
     auxiliary_file_patterns = ['fof_output_*.hdf5']
     snap_class_name = "pynbody.snapshot.swift.SwiftSnap"
     catalogue_class_name = "pynbody.halo.number_array.HaloNumberCatalogue"
@@ -30,19 +32,20 @@ class M200m(LiveHaloProperties):
 
 class FlamingoDensityProfile(spherical_region.SphericalRegionPropertyCalculation):
     names = "gas_rho_r200m_relative", "gas_p_r200m_relative", "gas_entropy_r200m_relative"
-        
-    _max_rad = 2.0  # Maximum radius in units of r200m
-    _radius_name = "r200m"  # Name of the radius property to use for scaling
 
+    _min_rad = 0.05 # Minimum radius in units of r200m 
+    _max_rad = 5.0  # Maximum radius in units of r200m
+    _radius_name = "r200m"  # Name of the radius property to use for scaling
+    _nbins = 50
+    
     @centred_calculation
     def calculate(self, data, existing_properties):
         delta = self.plot_xdelta() * existing_properties[self._radius_name]
         maxrad = existing_properties[self._radius_name] * self._max_rad
-        nbins = int(maxrad / delta)
-        maxrad = delta * nbins
+        minrad = existing_properties[self._radius_name] * self._min_rad
 
-        pro = pynbody.analysis.profile.Profile(data.gas, type='lin', ndim=3,
-                                               min=0, max=maxrad, nbins=nbins)
+        pro = pynbody.analysis.profile.Profile(data.gas, type='log', ndim=3,
+                                               min=minrad, max=maxrad, nbins=self._nbins)
         
         data.gas['Entropies']
 
@@ -54,17 +57,18 @@ class FlamingoDensityProfile(spherical_region.SphericalRegionPropertyCalculation
 
     
     def plot_xlabel(self):
-        return "r/r_200m"
+        return "log_10 r/r_200m"
     
     def plot_xdelta(self):
-        return 0.1
+        return np.log10(self._max_rad/self._min_rad)/self._nbins
 
     def plot_ylabel(self):
         return r"$\rho/M_{\odot}\,kpc^{-3}$", r"pressure/$M_{\odot} km^2 s^{-2} kpc^{-3}$", \
                r"entropy/$M_{\odot}^{-2/3} kpc^2 km^2 s^{-2}$" 
     
     def region_specification(self, db_data):
-        return pynbody.filt.Sphere(db_data[self._radius_name]*self._max_rad, 
+        TOLERANCE = 1.1
+        return pynbody.filt.Sphere(db_data[self._radius_name]*self._max_rad*TOLERANCE, 
                                    db_data['shrink_center'])
 
     def requires_property(self):
