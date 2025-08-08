@@ -228,19 +228,19 @@ def mdot(profile: pynbody.analysis.profile.Profile):
     # profile['vr'] gives mass-weighted mean v_r, while profile['mass'] gives the mass in each shell,
     # so the product is sum m v_r in each shell.
     ar = profile['vr'] * profile['mass'] / np.diff(profile['bin_edges'])
-    ar.units = profile['vr'].units / profile['bin_edges'].units
+    ar.units = profile['mass'].units * profile['vr'].units / profile['bin_edges'].units
     return ar.in_units('Msol yr^-1')
 
 @pynbody.analysis.profile.Profile.profile_property
 def mdot_inflow(profile: pynbody.analysis.profile.Profile):
     ar = -profile['vr_inflow'] * profile['mass'] / np.diff(profile['bin_edges'])
-    ar.units = profile['vr_inflow'].units / profile['bin_edges'].units
+    ar.units = profile['mass'].units * profile['vr_inflow'].units / profile['bin_edges'].units
     return ar.in_units('Msol yr^-1')
 
 @pynbody.analysis.profile.Profile.profile_property
 def mdot_outflow(profile: pynbody.analysis.profile.Profile):
     ar = profile['vr_outflow'] * profile['mass'] / np.diff(profile['bin_edges'])
-    ar.units = profile['vr_outflow'].units / profile['bin_edges'].units
+    ar.units = profile['mass'].units * profile['vr_outflow'].units / profile['bin_edges'].units
     return ar.in_units('Msol yr^-1')
 
 
