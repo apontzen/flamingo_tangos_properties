@@ -163,7 +163,7 @@ class FlamingoDensityProfileAbsolute(FlamingoDensityProfileBase):
         return "log_10 r/Mpc"
     
     def plot_x0(self):
-        return np.log10(self._min_rad*1e-3)
+        return np.log10(self._min_rad*1e-3) + np.log10(self._max_rad/self._min_rad)/self._nbins # outer bin
     
     def plot_xdelta(self):
         return np.log10(self._max_rad/self._min_rad)/self._nbins
@@ -224,34 +224,34 @@ def mdot(profile: pynbody.analysis.profile.Profile):
     # mdot = integral_r0^(r0+delta r) dr r^2 d omega (rho v_r) / delta r
     #      = integral dV (rho v_r) / delta r
     #      = sum m v_r / delta r
-    ar = profile['mv_r'] / np.diff(profile['bin_edges'])
-    ar.units = profile['mv_r'].units / profile['bin_edges'].units
+    #
+    # profile['vr'] gives mass-weighted mean v_r, while profile['mass'] gives the mass in each shell,
+    # so the product is sum m v_r in each shell.
+    ar = profile['vr'] * profile['mass'] / np.diff(profile['bin_edges'])
+    ar.units = profile['vr'].units / profile['bin_edges'].units
     return ar.in_units('Msol yr^-1')
 
 @pynbody.analysis.profile.Profile.profile_property
 def mdot_inflow(profile: pynbody.analysis.profile.Profile):
-    ar = -profile['mv_r_inflow'] / np.diff(profile['bin_edges'])
-    ar.units = profile['mv_r_inflow'].units / profile['bin_edges'].units
+    ar = -profile['vr_inflow'] * profile['mass'] / np.diff(profile['bin_edges'])
+    ar.units = profile['vr_inflow'].units / profile['bin_edges'].units
     return ar.in_units('Msol yr^-1')
 
 @pynbody.analysis.profile.Profile.profile_property
 def mdot_outflow(profile: pynbody.analysis.profile.Profile):
-    ar = profile['mv_r_outflow'] / np.diff(profile['bin_edges'])
-    ar.units = profile['mv_r_outflow'].units / profile['bin_edges'].units
+    ar = profile['vr_outflow'] * profile['mass'] / np.diff(profile['bin_edges'])
+    ar.units = profile['vr_outflow'].units / profile['bin_edges'].units
     return ar.in_units('Msol yr^-1')
 
-@pynbody.derived_array
-def mv_r(f):
-    return f['vr'] * f['mass']
 
 @pynbody.derived_array
-def mv_r_inflow(f):
-    ar = f['mv_r'].copy()
+def vr_inflow(f):
+    ar = f['vr'].copy()
     ar[ar>0] = 0
     return ar
 
 @pynbody.derived_array
-def mv_r_outflow(f):
-    ar = f['mv_r'].copy()
+def vr_outflow(f):
+    ar = f['vr'].copy()
     ar[ar<0] = 0
     return ar
