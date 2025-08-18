@@ -51,14 +51,12 @@ class FlamingoDensityProfileBase(spherical_region.SphericalRegionPropertyCalcula
     @centred_calculation
     def calculate(self, data: pynbody.snapshot.SimSnap, existing_properties):
         minrad, maxrad  = self._get_min_max_radius(existing_properties)
-
-        
-
         central_region = data[pynbody.filt.Sphere('25 kpc')]
         vel_centre = np.average(central_region['vel'], axis=0, weights=central_region['mass'])
-
+         
         try:
             data.gas['vel']-=vel_centre
+            pynbody.analysis.cosmology.add_hubble(data) 
             data.gas['vol'] = data.gas['smooth']**3  # Volume for weighting
 
             pro = pynbody.analysis.profile.Profile(data.gas, type='log', ndim=3,
