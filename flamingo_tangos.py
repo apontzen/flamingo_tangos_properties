@@ -32,8 +32,10 @@ class M200m(LiveHaloProperties):
         G = 4.30091e-6  # gravitational constant in (kpc/Msun)*(km/s)^2
         H0 = 68.0
         H0_kpc = H0 / 1e3  # convert H0 to km/s/kpc
+        OmegaM0 = 0.308
         rho_crit = 3 * (H0_kpc)**2 / (8 * 3.141592653589793 * G)  # Msun/kpc^3
-        return (4./3) * 3.141592653589793 * r200m**3 * 200 * rho_crit
+        return (4./3) * 3.141592653589793 * r200m**3 * 200 * rho_crit * OmegaM0 * \
+            (1+existing_properties.timestep.redshift)**3
     
     def requires_property(self):
         return super().requires_property() + ['r200m']
