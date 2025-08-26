@@ -126,6 +126,8 @@ def make_plot(name='rho', M_min=12.5, M_max=13.0, with_guide=False,
         profile/=pro_ks
         uncertainty /= pro_ks
     
+    if (profile<=0).all():
+        profile = -profile
 
     plot_kwargs = {'label': f"$10^{{{M_min}}} < M_{{200m}} / M_{{\\odot}} < 10^{{{M_max}}}$"} | plot_kwargs
     if name == 'mdot':
@@ -181,29 +183,36 @@ def make_plot(name='rho', M_min=12.5, M_max=13.0, with_guide=False,
 
 #ranges = [(11.8, 12.2), (12.6, 13.0), (13.0, 13.5), (13.5, 14.0), (14.0, 15.0)]
 ranges = [(12.5, 13.0), (13.0, 13.5), (13.5, 14.0), (14.0, 15.0)]
+ranges = [(12.0, 12.5), (13.0, 13.5), (14.0, 14.5)]
 vars = ['density', 'entropy', 'temp', 'p']
 plot_guides_for = ['density', 'entropy', 'temp', 'p']
 
-def make_profile_plots(v, tsnum=8, box="L0200N0720_HYDRO_FIDUCIAL", with_exclusive=False, norm_guide=False, particle='gas'):
+def make_profile_plots(v, tsnum=8, box="L0200N0720_HYDRO_FIDUCIAL", 
+                       newfig=True, with_exclusive=False, norm_guide=False, particle='gas', plot_kwargs={}):
     timestep_name = f"{box}/%{tsnum}.hdf5"
     z = db.get_timestep(timestep_name).redshift
     print(f"Plotting {v} profiles for {timestep_name}")
-    p.figure(figsize=(12, 5))
+    if newfig:
+        p.figure(figsize=(12, 5))
     p.subplot(121)
     p.title(f"Relative radius profiles ($z={z:.1f}$)")
+    p.gca().set_prop_cycle(None)
     for i, ra in enumerate(ranges):
         with_guide = i == 3 and v in plot_guides_for
         make_plot(v, ra[0], ra[1], with_guide=with_guide, with_exclusive=with_exclusive, relative=True,
                   with_alternative_ts=False, get_stack_kwargs={'timestep_name': timestep_name},
-                  norm_guide=norm_guide, particle=particle)
-    p.legend()
+                  norm_guide=norm_guide, particle=particle, plot_kwargs=plot_kwargs)
+    if newfig:
+        p.legend()
     p.subplot(122)
+    p.gca().set_prop_cycle(None)
     p.title(f"Absolute radius profiles ($z={z:.1f}$)")
     for i, ra in enumerate(ranges):
         with_guide = i == 3 and v in plot_guides_for
         make_plot(v, ra[0], ra[1], with_guide=with_guide, with_exclusive=with_exclusive, relative=False,
                   with_alternative_ts=False, get_stack_kwargs={'timestep_name': timestep_name},
-                  norm_guide=norm_guide, particle=particle)
+                  norm_guide=norm_guide, particle=particle, plot_kwargs=plot_kwargs)
 
-    p.legend()
+    if newfig:
+        p.legend()
 

@@ -45,25 +45,34 @@ class FlamingoDensityProfileBase(spherical_region.SphericalRegionPropertyCalcula
             "_gas_temp", "_gas_rho", "_gas_vr", "_gas_vr_disp", "_gas_mass_enclosed", "_gas_mass_enclosed_2d", \
             "_dm_mass_enclosed", "_dm_mass_enclosed_2d", "_dm_vr", "_dm_vr_disp", \
             "_gas_mdot", "_gas_mdot_inflow", "_gas_mdot_outflow", \
-            "_dm_mdot", "_dm_mdot_inflow", "_dm_mdot_outflow"
-    
+            "_dm_mdot", "_dm_mdot_inflow", "_dm_mdot_outflow", "_gas_entropy_outflow", "_gas_entropy_inflow", \
+            "_gas_temp_outflow", "_gas_temp_inflow", "_gas_rho_outflow", "_gas_rho_inflow"
+
 
     _nbins = 50
-    
+
+    def _get_velocity_centre(self, data, region_sizes=['25 kpc', '50 kpc', '200 kpc']):
+        for region_size in region_sizes:
+            try:
+                region = data[pynbody.filt.Sphere(region_size)]
+                vel_centre = np.average(region['vel'], axis=0, weights=region['mass'])
+                return vel_centre
+            except ZeroDivisionError:
+                pass
+        return np.average(data['vel'], axis=0, weights=data['mass'])
+
     @centred_calculation
     def calculate(self, data: pynbody.snapshot.SimSnap, existing_properties):
         minrad, maxrad  = self._get_min_max_radius(existing_properties)
-        central_region = data[pynbody.filt.Sphere('25 kpc')]
-        vel_centre = np.average(central_region['vel'], axis=0, weights=central_region['mass'])
-         
+        vel_centre = self._get_velocity_centre(data)
+
         try:
-            data.gas['vel']-=vel_centre
+            data['vel']-=vel_centre
             pynbody.analysis.cosmology.add_hubble(data) 
+
             data.gas['vol'] = data.gas['smooth']**3  # Volume for weighting
 
-            pro = pynbody.analysis.profile.Profile(data.gas, type='log', ndim=3,
-                                                min=minrad, max=maxrad, nbins=self._nbins,
-                                                weight_by='vol')
+            pro_vol_weighted = self._make_vol_weighted_profile(data.gas, minrad, maxrad)
             
             # pre-load data (unclear why this is necessary, but it is)
             data.gas['Entropies']
@@ -71,42 +80,71 @@ class FlamingoDensityProfileBase(spherical_region.SphericalRegionPropertyCalcula
             data.gas['rho']
             data.gas['p']
 
-            den = pro['density']
-            p = pro['p']
-            entropy = pro['Entropies']
-            temp = pro['temp']
-            rho = pro['rho']
+            den = pro_vol_weighted['density']
+            p = pro_vol_weighted['p']
+            entropy = pro_vol_weighted['Entropies']
+            temp = pro_vol_weighted['temp']
+            rho = pro_vol_weighted['rho']
 
-            pro = pynbody.analysis.profile.Profile(data.gas, type='log', ndim=3,
-                                                min=minrad, max=maxrad, nbins=self._nbins)
-            vr = pro['vr']
-            vr_disp = pro['vr_disp']
-            mass_enc = pro['mass_enc']
-            mdot = pro['mdot']
-            mdot_inflow = pro['mdot_inflow']
-            mdot_outflow = pro['mdot_outflow']
+            filt_outflow = pynbody.filt.HighPass('vr', 0)
+            pro_vol_weighted_out = self._make_mdot_weighted_profile(data.gas[filt_outflow], minrad, maxrad)
+            entropy_out = pro_vol_weighted_out['Entropies']
+            temp_out = pro_vol_weighted_out['temp']
+            rho_out = pro_vol_weighted_out['rho']
 
-            pro = pynbody.analysis.profile.Profile(data.gas, type='log', ndim=2,
-                                                min=minrad, max=maxrad, nbins=self._nbins)
-            mass_enc_2d = pro['mass_enc']
+            filt_inflow = pynbody.filt.LowPass('vr', 0)
+            pro_vol_weighted_in = self._make_mdot_weighted_profile(data.gas[filt_inflow], minrad, maxrad)
+            entropy_in = pro_vol_weighted_in['Entropies']
+            temp_in = pro_vol_weighted_in['temp']
+            rho_in = pro_vol_weighted_in['rho']
 
-            pro = pynbody.analysis.profile.Profile(data.dm, type='log', ndim=3,
-                                                min=minrad, max=maxrad, nbins=self._nbins)
-            mass_enc_dm = pro['mass_enc']
-            vr_dm = pro['vr']
-            vr_disp_dm = pro['vr_disp']
-            mdot_dm = pro['mdot']
-            mdot_inflow_dm = pro['mdot_inflow']
-            mdot_outflow_dm = pro['mdot_outflow']
+            vr, vr_disp, mass_enc, mdot, mdot_inflow, mdot_outflow, mass_enc_2d = self._get_profiles(data.gas, minrad, maxrad)
 
-            pro = pynbody.analysis.profile.Profile(data.dm, type='log', ndim=2,
-                                                min=minrad, max=maxrad, nbins=self._nbins)
-            mass_enc_2d_dm = pro['mass_enc']
+
+            vr_dm, vr_disp_dm, mass_enc_dm, mdot_dm, mdot_inflow_dm, mdot_outflow_dm, mass_enc_2d_dm = self._get_profiles(data.dm, minrad, maxrad)
+
+
         finally:
-            data.gas['vel'] += vel_centre  
+            data['vel'] += vel_centre  
 
         return den, p, entropy, temp, rho, vr, vr_disp, mass_enc, mass_enc_2d, mass_enc_dm, mass_enc_2d_dm, vr_dm, vr_disp_dm, \
-                mdot, mdot_inflow, mdot_outflow, mdot_dm, mdot_inflow_dm, mdot_outflow_dm
+                mdot, mdot_inflow, mdot_outflow, mdot_dm, mdot_inflow_dm, mdot_outflow_dm, entropy_out, entropy_in, temp_out, \
+                temp_in, rho_out, rho_in 
+
+
+    def _make_vol_weighted_profile(self, data, minrad, maxrad):
+        return pynbody.analysis.profile.Profile(data, type='log', ndim=3,
+                                                min=minrad, max=maxrad, nbins=self._nbins,
+                                                weight_by='vol')
+
+    def _make_mdot_weighted_profile(self, data, minrad, maxrad):
+        return pynbody.analysis.profile.Profile(data, type='log', ndim=3,
+                                                min=minrad, max=maxrad, nbins=self._nbins,
+                                                weight_by='vr') # assuming ~const particle mass
+
+    def _get_profiles(self, data, minrad, maxrad):
+        pro_2d = pynbody.analysis.profile.Profile(data, type='log', ndim=3,
+                                                min=minrad, max=maxrad, nbins=self._nbins)
+        vr = pro_2d['vr']
+        vr_disp = pro_2d['vr_disp']
+        mass_enc = pro_2d['mass_enc']
+        mdot = pro_2d['mdot']
+
+        filt_inflow = pynbody.filt.LowPass('vr', 0)
+        pro_inflow = pynbody.analysis.profile.Profile(data[filt_inflow], type='log', ndim=3,
+                                                          min=minrad, max=maxrad, nbins=self._nbins)
+        mdot_inflow = pro_inflow['mdot']
+            
+        filt_outflow = pynbody.filt.HighPass('vr', 0)
+        pro_outflow = pynbody.analysis.profile.Profile(data[filt_outflow], type='log', ndim=3,
+                                                           min=minrad, max=maxrad, nbins=self._nbins)
+        mdot_outflow = pro_outflow['mdot']
+
+        pro_2d = pynbody.analysis.profile.Profile(data, type='log', ndim=2,
+                                                min=minrad, max=maxrad, nbins=self._nbins)
+        mass_enc_2d = pro_2d['mass_enc']
+
+        return vr,vr_disp,mass_enc,mdot,mdot_inflow,mdot_outflow,mass_enc_2d
 
     def _get_min_max_radius(self, existing_properties):
         raise NotImplementedError("Subclasses must implement _get_min_max_radius method")
@@ -126,7 +164,9 @@ class FlamingoDensityProfileBase(spherical_region.SphericalRegionPropertyCalcula
                r"$\rho/M_{\odot}\,kpc^{-3}$", r"velocity/$km/s$", r"vel dispersion/$km/s$", r"$M_{gas}/M_{\odot}$", r"$M_{gas,2D}/M_{\odot}$", \
                r"$M_{dm}/M_{\odot}$", r"$M_{dm,2D}/M_{\odot}$", r"DM velocity/$km/s$", r"DM vel dispersion/$km/s$", \
                 r"$\dot{M}_{gas}/M_{\odot} yr^{-1}$", r"$\dot{M}_{gas,inflow}/M_{\odot} yr^{-1}$", r"$\dot{M}_{gas,outflow}/M_{\odot} yr^{-1}$", \
-                r"$\dot{M}_{dm}/M_{\odot} yr^{-1}$", r"$\dot{M}_{dm,inflow}/M_{\odot} yr^{-1}$", r"$\dot{M}_{dm,outflow}/M_{\odot} yr^{-1}$"
+                r"$\dot{M}_{dm}/M_{\odot} yr^{-1}$", r"$\dot{M}_{dm,inflow}/M_{\odot} yr^{-1}$", r"$\dot{M}_{dm,outflow}/M_{\odot} yr^{-1}$", \
+                r"entropy/$_{\rm outflow}M_{\odot}^{-2/3} kpc^2 km^2 s^{-2}$", r"entropy/$_{\rm inflow}M_{\odot}^{-2/3} kpc^2 km^2 s^{-2}$", \
+                r"T$_{\rm outflow}/K$", r"T$_{\rm inflow}/K$", r"$\rho_{\rm outflow}/M_{\odot} kpc^{-3}$", r"$\rho_{\rm inflow}/M_{\odot} kpc^{-3}$"
 
     def plot_xlog(self):
         return False
@@ -231,27 +271,12 @@ def mdot(profile: pynbody.analysis.profile.Profile):
     ar.units = profile['mass'].units * profile['vr'].units / profile['bin_edges'].units
     return ar.in_units('Msol yr^-1')
 
-@pynbody.analysis.profile.Profile.profile_property
-def mdot_inflow(profile: pynbody.analysis.profile.Profile):
-    ar = -profile['vr_inflow'] * profile['mass'] / np.diff(profile['bin_edges'])
-    ar.units = profile['mass'].units * profile['vr_inflow'].units / profile['bin_edges'].units
-    return ar.in_units('Msol yr^-1')
-
-@pynbody.analysis.profile.Profile.profile_property
-def mdot_outflow(profile: pynbody.analysis.profile.Profile):
-    ar = profile['vr_outflow'] * profile['mass'] / np.diff(profile['bin_edges'])
-    ar.units = profile['mass'].units * profile['vr_outflow'].units / profile['bin_edges'].units
-    return ar.in_units('Msol yr^-1')
-
-
 @pynbody.derived_array
-def vr_inflow(f):
-    ar = f['vr'].copy()
-    ar[ar>0] = 0
-    return ar
-
-@pynbody.derived_array
-def vr_outflow(f):
-    ar = f['vr'].copy()
-    ar[ar<0] = 0
+def vr_smoothed(f: pynbody.snapshot.SimSnap):
+    """Smoothed radial velocity field, using SPH smoothing."""
+    ar = f['vr']
+    f.gas.build_tree()
+    f.gas['smooth']
+    ar_gas = f.gas.kdtree.sph_mean(f.gas['vr'])
+    ar[f._get_family_slice(pynbody.family.gas)] = ar_gas
     return ar
