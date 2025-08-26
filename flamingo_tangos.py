@@ -46,7 +46,7 @@ class FlamingoDensityProfileBase(spherical_region.SphericalRegionPropertyCalcula
             "_dm_mass_enclosed", "_dm_mass_enclosed_2d", "_dm_vr", "_dm_vr_disp", \
             "_gas_mdot", "_gas_mdot_inflow", "_gas_mdot_outflow", \
             "_dm_mdot", "_dm_mdot_inflow", "_dm_mdot_outflow", "_gas_entropy_outflow", "_gas_entropy_inflow", \
-            "_gas_temp_outflow", "_gas_temp_inflow", "_gas_rho_outflow", "_gas_rho_inflow"
+            "_gas_temp_outflow", "_gas_temp_inflow", "_gas_density_outflow", "_gas_density_inflow"
 
 
     _nbins = 50
@@ -90,13 +90,13 @@ class FlamingoDensityProfileBase(spherical_region.SphericalRegionPropertyCalcula
             pro_vol_weighted_out = self._make_mdot_weighted_profile(data.gas[filt_outflow], minrad, maxrad)
             entropy_out = pro_vol_weighted_out['Entropies']
             temp_out = pro_vol_weighted_out['temp']
-            rho_out = pro_vol_weighted_out['rho']
+            den_out = pro_vol_weighted_out['density']
 
             filt_inflow = pynbody.filt.LowPass('vr', 0)
             pro_vol_weighted_in = self._make_mdot_weighted_profile(data.gas[filt_inflow], minrad, maxrad)
             entropy_in = pro_vol_weighted_in['Entropies']
             temp_in = pro_vol_weighted_in['temp']
-            rho_in = pro_vol_weighted_in['rho']
+            den_in = pro_vol_weighted_in['density']
 
             vr, vr_disp, mass_enc, mdot, mdot_inflow, mdot_outflow, mass_enc_2d = self._get_profiles(data.gas, minrad, maxrad)
 
@@ -109,7 +109,7 @@ class FlamingoDensityProfileBase(spherical_region.SphericalRegionPropertyCalcula
 
         return den, p, entropy, temp, rho, vr, vr_disp, mass_enc, mass_enc_2d, mass_enc_dm, mass_enc_2d_dm, vr_dm, vr_disp_dm, \
                 mdot, mdot_inflow, mdot_outflow, mdot_dm, mdot_inflow_dm, mdot_outflow_dm, entropy_out, entropy_in, temp_out, \
-                temp_in, rho_out, rho_in 
+                temp_in, den_out, den_in 
 
 
     def _make_vol_weighted_profile(self, data, minrad, maxrad):
