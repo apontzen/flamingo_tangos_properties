@@ -8,6 +8,37 @@ import numpy as np
 
 __version__ = "0.1.0"
 
+def _cosmic_hubble(redshift):
+    H0 = 68.1
+    OmegaM0 = 0.306
+    OmegaL0 = 1.-OmegaM0
+
+    H_z = H0 * np.sqrt(OmegaM0 * (1 + redshift)**3 + OmegaL0)
+    return H_z
+
+def _cosmic_crit_density_0():
+    G = 4.30091e-6  # gravitational constant in (kpc/Msun)*(km/s)^2
+    H0 = 68.1
+    H0_kpc = H0 / 1e3  # convert H0 to km/s/kpc
+    return 3 * (H0_kpc)**2 / (8 * 3.141592653589793 * G)  # Msun/kpc^3
+
+def _cosmic_mean_density(redshift):
+    OmegaM0 = 0.306
+    rho_crit = _cosmic_crit_density_0()
+    return rho_crit * OmegaM0 * (1 + redshift)**3
+
+
+def _cosmic_dm_density(redshift):
+    OmegaC0 = 0.306 - 0.0486
+    rho_crit = _cosmic_crit_density_0()
+    return rho_crit * OmegaC0 * (1 + redshift)**3
+
+def _cosmic_baryon_density(redshift):
+    OmegaB0 = 0.0486
+    rho_crit = _cosmic_crit_density_0()
+    return rho_crit * OmegaB0 * (1 + redshift)**3
+
+
 class FlamingoInputHandler(tangos.input_handlers.pynbody.Gadget4HDFSubfindInputHandler):
     patterns = ['flamingo_00??.hdf5']
     auxiliary_file_patterns = ['fof_output_*.hdf5']
@@ -28,15 +59,9 @@ class M200m(LiveHaloProperties):
     def calculate(self, data, existing_properties):
         # convert r200m to M200m
         r200m = existing_properties['r200m']
-        # Critical density in units of Msun/kpc^3
-        G = 4.30091e-6  # gravitational constant in (kpc/Msun)*(km/s)^2
-        H0 = 68.0
-        H0_kpc = H0 / 1e3  # convert H0 to km/s/kpc
-        OmegaM0 = 0.308
-        rho_crit = 3 * (H0_kpc)**2 / (8 * 3.141592653589793 * G)  # Msun/kpc^3
-        return (4./3) * 3.141592653589793 * r200m**3 * 200 * rho_crit * OmegaM0 * \
-            (1+existing_properties.timestep.redshift)**3
-    
+        return (4./3) * 3.141592653589793 * r200m**3 * 200 * \
+              _cosmic_mean_density(existing_properties.timestep.redshift)
+
     def requires_property(self):
         return super().requires_property() + ['r200m']
 

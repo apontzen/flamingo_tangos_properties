@@ -1,6 +1,7 @@
 import matplotlib.pyplot as p
 import numpy as np
 import tangos as db
+import flamingo_tangos as ft
 
 
 class NoHalosInStackError(ValueError):
@@ -16,7 +17,8 @@ def get_labels(ts, property_name):
     xlab = prop.plot_xlabel()
     return xlab, ylabs[prop.index_of_name(property_name)]
 
-def get_stack(property_name, M_min, M_max, use_log=False, timestep_name="L0200%HYDRO%/%8%"):
+def get_stack(property_name, M_min, M_max, use_log=False, timestep_name="L0200%HYDRO%/%8%",
+              use_percentile=False):
     ts = db.get_timestep(timestep_name)
     M200m, profiles = ts.calculate_all('M200m()', property_name)
     mask = (M200m>10**M_min)*(M200m<10**M_max)
@@ -29,7 +31,9 @@ def get_stack(property_name, M_min, M_max, use_log=False, timestep_name="L0200%H
         ln_p = np.log(p)
         ln_p[ln_p==-np.inf] = np.nan
         log_profiles.append(ln_p)
-    if 'rho' in property_name:
+    if use_percentile is not None:
+        mean_profile = np.nanpercentile([p for p in profiles[mask]], use_percentile, axis=0)
+    elif 'rho' in property_name:
         # zeros should be counted, otherwise biased mass estimator
         if use_log:
             mean_profile = np.exp(np.nansum([p for p in log_profiles], axis=0)/num_included)
@@ -188,7 +192,8 @@ vars = ['density', 'entropy', 'temp', 'p']
 plot_guides_for = ['density', 'entropy', 'temp', 'p']
 
 def make_profile_plots(v, tsnum=8, box="L0200N0720_HYDRO_FIDUCIAL", 
-                       newfig=True, with_exclusive=False, norm_guide=False, particle='gas', plot_kwargs={}):
+                       newfig=True, with_exclusive=False, norm_guide=False, 
+                       particle='gas', plot_kwargs={}, get_stack_kwargs={}):
     timestep_name = f"{box}/%{tsnum}.hdf5"
     z = db.get_timestep(timestep_name).redshift
     print(f"Plotting {v} profiles for {timestep_name}")
@@ -200,7 +205,8 @@ def make_profile_plots(v, tsnum=8, box="L0200N0720_HYDRO_FIDUCIAL",
     for i, ra in enumerate(ranges):
         with_guide = i == 3 and v in plot_guides_for
         make_plot(v, ra[0], ra[1], with_guide=with_guide, with_exclusive=with_exclusive, relative=True,
-                  with_alternative_ts=False, get_stack_kwargs={'timestep_name': timestep_name},
+                  with_alternative_ts=False, 
+                  get_stack_kwargs=get_stack_kwargs | {'timestep_name': timestep_name},
                   norm_guide=norm_guide, particle=particle, plot_kwargs=plot_kwargs)
     if newfig:
         p.legend()
@@ -210,9 +216,54 @@ def make_profile_plots(v, tsnum=8, box="L0200N0720_HYDRO_FIDUCIAL",
     for i, ra in enumerate(ranges):
         with_guide = i == 3 and v in plot_guides_for
         make_plot(v, ra[0], ra[1], with_guide=with_guide, with_exclusive=with_exclusive, relative=False,
-                  with_alternative_ts=False, get_stack_kwargs={'timestep_name': timestep_name},
+                  with_alternative_ts=False, get_stack_kwargs=get_stack_kwargs|{'timestep_name': timestep_name},
                   norm_guide=norm_guide, particle=particle, plot_kwargs=plot_kwargs)
 
     if newfig:
         p.legend()
 
+def cosmic_density(redshift, particle):
+    match particle:
+        case 'gas':
+            mean_den = ft._cosmic_baryon_density(redshift)
+        case 'dm':
+            mean_den = ft._cosmic_dm_density(redshift)
+        case 'total':
+            mean_den = ft._cosmic_mean_density(redshift)
+        case _:
+            raise ValueError("particle must be 'gas', 'dm', or 'total'")
+    return mean_den
+        
+def cosmic_hubble_flow(redshift, box):
+    h_z = ft._cosmic_hubble(redshift)
+    r_min, r_max = p.gca().get_xlim()
+    r_vals = np.logspace(np.log10(r_min), np.log10(r_max), 100)
+    v_vals = h_z * r_vals
+    return r_vals, v_vals
+
+def add_cosmic_mean_density(tsnum=8, box="L0200N0360_HYDRO_FIDUCIAL", particle=None):
+    redshift = db.get_timestep(f"{box}/%{tsnum}.hdf5").redshift
+    mean_den = cosmic_density(redshift, particle)
+    p.axhline(mean_den, color='grey', linestyle=':', label="Cosmic Mean Density")
+
+def add_cosmic_hubble_flow(tsnum=8, box="L0200N0360_HYDRO_FIDUCIAL"):
+    redshift = db.get_timestep(f"{box}/%{tsnum}.hdf5").redshift
+    r_vals, v_vals = cosmic_hubble_flow(redshift, box)
+    p.plot(r_vals, v_vals, color='grey', linestyle=':', label="Hubble Flow")
+
+def add_cosmic_mean_flow(tsnum=8, box="L0200N0360_HYDRO_FIDUCIAL", particle=None):
+    redshift = db.get_timestep(f"{box}/%{tsnum}.hdf5").redshift
+    r_vals, v_vals = cosmic_hubble_flow(redshift, box)
+    mean_den = cosmic_density(redshift, particle)  # Msol kpc^-3
+
+    kpc_per_km = 1 / 3.086e16
+    yr_per_s = 1 / 3.15576e7
+    v_vals *= kpc_per_km / yr_per_s # convert km/s to kpc/yr
+
+    area = 4 * np.pi * ((r_vals * 1e3) ** 2) # kpc^2
+
+    flow = mean_den * v_vals * area # in units Msol kpc^-3 * kpc/yr * kpc^2 = Msol / yr
+
+    flow_min, flow_max = p.gca().get_ylim()
+    mask = (flow > flow_min) & (flow < flow_max)
+    p.plot(r_vals[mask], flow[mask], color='grey', linestyle=':', label="Cosmic Mean Flow")
