@@ -18,38 +18,52 @@ def get_labels(ts, property_name):
     return xlab, ylabs[prop.index_of_name(property_name)]
 
 def get_stack(property_name, M_min, M_max, use_log=False, timestep_name="L0200%HYDRO%/%8%",
-              use_percentile=False):
+              use_percentile=None,weight_by=None):
     ts = db.get_timestep(timestep_name)
-    M200m, profiles = ts.calculate_all('M200m()', property_name)
+    if weight_by:
+        M200m, profiles, weights = ts.calculate_all('M200m()', property_name, weight_by)
+        profiles *= weights
+    else:
+        M200m, profiles = ts.calculate_all('M200m()', property_name)
+
     mask = (M200m>10**M_min)*(M200m<10**M_max)
     num_included = mask.sum()
     if num_included == 0 :
         raise NoHalosInStackError("No halos in stack")
-    
-    log_profiles = []
-    for p in profiles[mask]:
-        ln_p = np.log(p)
-        ln_p[ln_p==-np.inf] = np.nan
-        log_profiles.append(ln_p)
+
     if use_percentile is not None:
         mean_profile = np.nanpercentile([p for p in profiles[mask]], use_percentile, axis=0)
+        err_profile = 0.0
     elif 'rho' in property_name:
         # zeros should be counted, otherwise biased mass estimator
         if use_log:
             mean_profile = np.exp(np.nansum([p for p in log_profiles], axis=0)/num_included)
         else:
             mean_profile = np.nansum([p for p in profiles[mask]], axis=0)/num_included
+        err_profile = mean_profile/np.sqrt(num_included)
     else:
         # nan bins should not be counted
-        if use_log:
-            mean_profile = np.exp(np.nanmean([p for p in log_profiles], axis=0))
-        else:
-            mean_profile = np.nanmean([p for p in profiles[mask]], axis=0)
-    err_log_profile = (np.nanstd([p for p in log_profiles], axis=0)/np.sqrt(num_included))
-
+        mean_profile, err_profile = _get_mean_of_profiles(profiles, use_log, mask)
+    
     xs = get_xs(ts, property_name, mean_profile)
     labels = get_labels(ts, property_name)
-    return mean_profile, mean_profile * err_log_profile, xs, labels
+    return mean_profile, err_profile, xs, labels
+
+def _get_mean_of_profiles(profiles, use_log, mask):
+    log_profiles = []
+    for p in profiles[mask]:
+        ln_p = np.log(p)
+        ln_p[ln_p==-np.inf] = np.nan
+        log_profiles.append(ln_p)
+    if use_log:
+        mean_profile = np.exp(np.nanmean([p for p in log_profiles], axis=0))
+    else:
+        mean_profile = np.nanmean([p for p in profiles[mask]], axis=0)
+    num_included = mask.sum()
+
+    err_log_profile = (np.nanstd([p for p in log_profiles], axis=0)/np.sqrt(num_included))
+    err_profile = mean_profile * err_log_profile
+    return mean_profile, err_profile
 
 def make_flow_ratio_plot(prop_name = 'gas_mdot_inflow', M_min=12.5, M_max=13.0, box1="L0200N0360_HYDRO_STRONGEST_AGN", box2="L0200N0360_HYDRO_WEAK_AGN", tsnum=1):
     try:
