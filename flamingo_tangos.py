@@ -1,3 +1,4 @@
+from tangos.config import min_halo_particles
 import tangos, tangos.input_handlers.pynbody
 from tangos.properties.pynbody import spherical_region
 from tangos.properties import LiveHaloProperties
@@ -5,6 +6,12 @@ from tangos.properties.pynbody.centring import centred_calculation
 import pynbody, pynbody.halo
 
 import numpy as np
+
+import pathlib
+import tqdm
+
+from typing import Generator
+from collections import defaultdict 
 
 __version__ = "0.1.0"
 
@@ -43,7 +50,9 @@ class FlamingoInputHandler(tangos.input_handlers.pynbody.Gadget4HDFSubfindInputH
     patterns = ['flamingo_00??.hdf5']
     auxiliary_file_patterns = ['fof_output_*.hdf5']
     snap_class_name = "pynbody.snapshot.swift.SwiftSnap"
-    catalogue_class_name = "pynbody.halo.number_array.HaloNumberCatalogue"
+    catalogue_class_name = "pynbody.halo.hbtplus.HBTPlusCatalogue"
+
+    _sub_parent_names = [] # although HBTplus stores this as 'HostHaloId', pynbody already translates it to 'parent'
 
     def load_timestep_without_caching(self, ts_extension, mode=None) -> pynbody.snapshot.simsnap.SimSnap:
         f = super().load_timestep_without_caching(ts_extension, mode)
@@ -52,6 +61,153 @@ class FlamingoInputHandler(tangos.input_handlers.pynbody.Gadget4HDFSubfindInputH
             f._shared_arrays = True
             f.wrap()
         return f
+    
+    def enumerate_objects(self, ts_extension, object_typetag="halo", min_halo_particles=100):
+        if object_typetag != 'halo':
+            return # not implementing groups or subhalos at this time
+        h = self.get_catalogue(ts_extension, object_typetag)
+        for hi in tqdm.tqdm(h):
+            try:
+                i = hi.properties['halo_number']
+                is_halo = hi.properties['Depth']<=0
+                if len(hi.dm) + len(hi.star) + len(hi.gas) >= min_halo_particles and is_halo:
+                    yield i, i, len(hi.dm), len(hi.star), len(hi.gas)
+            except (ValueError, KeyError) as e:
+                pass
+
+    def _is_able_to_load(self, ts_extension):
+        filepath = self._extension_to_filename(ts_extension)
+        try:
+            f = pynbody.snapshot.swift.SwiftSnap(filepath)
+            h = self._construct_pynbody_halos(f)
+            return True
+        except OSError:
+            return False
+        
+    @classmethod
+    def _construct_pynbody_halos(cls, sim, *args, **kwargs):
+        h = pynbody.halo.hbtplus.HBTPlusCatalogue(sim,
+                                                   filename=cls._sim_filename_to_hbt_filename(sim.filename),)
+        return h
+
+    @classmethod
+    def _sim_filename_to_hbt_filename_candidates(cls, sim_filename : pathlib.Path | str) -> Generator[pathlib.Path]:
+        """e.g. /path/to/simname_0004.hdf5 -> /path/to/HBT/004/SubSnap_004"""
+        if isinstance(sim_filename, str):
+            sim_filename = pathlib.Path(sim_filename)
+        snapnum = int(sim_filename.stem.split("_")[-1])
+        yield sim_filename.parent / f"SubSnap_{snapnum:03d}"
+        yield sim_filename.parent / "HBT" / f"SubSnap_{snapnum:03d}"
+        yield sim_filename.parent / "HBT" / f"{snapnum:03d}" / f"SubSnap_{snapnum:03d}"
+
+    @classmethod
+    def _sim_filename_to_hbt_filename(cls, sim_filename : pathlib.Path) -> pathlib.Path:
+        for candidate in cls._sim_filename_to_hbt_filename_candidates(sim_filename):
+            if candidate.with_suffix(".0.hdf5").exists() or candidate.with_suffix(".hdf5").exists():
+                return candidate
+        raise ValueError(f"Could not find HBT+ halo catalogue corresponding to simulation file {sim_filename}")
+
+    
+    def _make_track_id_to_min_depth_track_id(self, props: np.recarray):
+        """Make a mapping from TrackId to the TrackId of the depth-0 (or -1) ancestor of each halo.
+        
+        This is basically the way of identifying mergers.
+        """
+        input_trackids = props['TrackId']
+        input_trackids_sorter = np.argsort(input_trackids)
+        
+        trackid_to_mindepth_trackid = np.repeat(-1, np.max(input_trackids)+1)
+        trackid_to_mindepth_trackid[input_trackids] = input_trackids
+        depth_current_map = props['Depth']
+
+        while depth_current_map.max() > 0:
+            mask = depth_current_map > 0
+            problematic_trackids = input_trackids[mask]
+            offsets_of_problematic_trackids = input_trackids_sorter[
+                np.searchsorted(input_trackids, problematic_trackids, sorter=input_trackids_sorter)
+            ]
+            parent_trackids = props['NestedParentTrackId'][offsets_of_problematic_trackids]
+
+            trackid_to_mindepth_trackid[problematic_trackids] = parent_trackids
+
+            depth_current_map[mask] -= 1
+
+        return trackid_to_mindepth_trackid
+    
+    @classmethod
+    def create_offset_mapping(cls, offset1_to_trackid, offset2_to_trackid):
+        # Group offset2 indices by their track IDs
+        trackid_to_offset2 = defaultdict(list)
+        for offset2, trackid in enumerate(offset2_to_trackid):
+            trackid_to_offset2[trackid].append(offset2)
+        
+        # Build the mapping from offset1 to matching offset2 values
+        offset1_to_offset2 = {}
+        for offset1, trackid in enumerate(offset1_to_trackid):
+            offset1_to_offset2[offset1] = trackid_to_offset2[trackid]
+        
+        return dict(offset1_to_offset2)
+    
+    @classmethod
+    def offset_mapping_to_number_mapping_with_fractions(cls, offset_mapping, offset_to_number1, offset_to_number2, offset2_mbound):
+        number_mapping = {}
+        for offset1, offset2_list in offset_mapping.items():
+            number1 = offset_to_number1(offset1)
+            mbounds = [offset2_mbound[offset2] for offset2 in offset2_list]
+            total_mbound = np.sum(mbounds)
+            number2_list = [(offset_to_number2(offset2), mbound2/total_mbound) for offset2, mbound2 in zip(offset2_list, mbounds) if mbound2>0]
+            number_mapping[number1] = number2_list
+        return number_mapping
+
+    def match_objects(self, ts1, ts2, halo_min, halo_max,
+                      dm_only=False, threshold=0.005, object_typetag='halo',
+                      output_handler_for_ts2=None,
+                      fuzzy_match_kwa={}):
+
+        if object_typetag=='halo' and output_handler_for_ts2 is self:
+            # specialised case
+            f1 = self.load_timestep(ts1)
+            f2 = self.load_timestep(ts2)
+
+            if f1.properties['z'] == f2.properties['z']:
+                raise ValueError("Cannot match HBT+ halos between identical snapshots")
+            elif f1.properties['z'] < f2.properties['z']:
+                reverse_map = True 
+                f1, f2 = f2, f1
+                ts1, ts2 = ts2, ts1
+            else:
+                reverse_map = False
+                
+
+            assert f1.properties['z'] > f2.properties['z'], "f1 should be later than f2"
+            h1 = self.get_catalogue(ts1, 'halo')
+            h2 = self.get_catalogue(ts2, 'halo')
+
+            offset1_to_number1 = h1.number_mapper.index_to_number
+            offset2_to_number2 = h2.number_mapper.index_to_number
+
+            props1 = h1.get_properties_all_halos()
+            props2 = h2.get_properties_all_halos()
+            
+            trackid_to_trackid2 = self._make_track_id_to_min_depth_track_id(props2) # many-to-one (early-to-late) mapping
+
+            offset1_to_trackid = trackid_to_trackid2[props1['TrackId']] # many-to-one
+            offset2_to_trackid = props2['TrackId'] # one-to-one
+
+            if reverse_map:
+                result = self.create_offset_mapping(offset2_to_trackid, offset1_to_trackid)
+                result = self.offset_mapping_to_number_mapping_with_fractions(result, offset2_to_number2, offset1_to_number1, props1['Mbound'])
+            else:
+                result = self.create_offset_mapping(offset1_to_trackid, offset2_to_trackid)
+                result = self.offset_mapping_to_number_mapping_with_fractions(result, offset1_to_number1, offset2_to_number2, props2['Mbound'])
+
+            return result
+
+
+        else:
+            return super().match_objects(ts1, ts2, halo_min, halo_max, dm_only, threshold, object_typetag,
+                                         output_handler_for_ts2, fuzzy_match_kwa)
+
 
 class M200m(LiveHaloProperties):
     names = "M200m"
@@ -65,6 +221,19 @@ class M200m(LiveHaloProperties):
     def requires_property(self):
         return super().requires_property() + ['r200m']
 
+class RadialVelocityProfile(spherical_region.SphericalRegionPropertyCalculation):
+    names = "gas_vr", "gas_vr_disp"
+
+    @centred_calculation
+    def calculate(self, particle_data: pynbody.snapshot.SimSnap, halo_entry):
+        minrad = 10.0; maxrad = 3000.0
+        pro = pynbody.analysis.profile.Profile(particle_data.gas, type='log', ndim=3,
+                                            min=minrad, max=maxrad, nbins=50,
+                                            weight_by='vol')
+
+        return pro['vr'], pro['vr_disp']
+
+    
 class FlamingoDensityProfileBase(spherical_region.SphericalRegionPropertyCalculation):
     names = "_gas_density", "_gas_p", "_gas_entropy", \
             "_gas_temp", "_gas_rho", "_gas_vr", "_gas_vr_disp", "_gas_mass_enclosed", "_gas_mass_enclosed_2d", \
