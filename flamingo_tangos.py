@@ -209,6 +209,24 @@ class FlamingoInputHandler(tangos.input_handlers.pynbody.Gadget4HDFSubfindInputH
                                          output_handler_for_ts2, fuzzy_match_kwa)
 
 
+class StarForm(spherical_region.SphericalRegionPropertyCalculation):
+    names = "central_SFR_100Myr", "central_Mstar"
+
+    @centred_calculation
+    def calculate(self, halo, existing_properties):
+        halo = halo.star
+
+        tform = halo['tform'].in_units("Gyr")
+        t_now = tform.max()
+        mask_100Myr = (t_now-tform)<0.1
+        # Because physical_units has been called previously, mass is in Msol. Return results in Msol/yr.
+        return halo['mass'][mask_100Myr].sum()/1e8, halo['mass'].sum()
+    
+    def region_specification(self, db_data):
+        return pynbody.filt.Sphere("30 kpc", db_data['shrink_center'])
+    
+
+
 class M200m(LiveHaloProperties):
     names = "M200m"
 
