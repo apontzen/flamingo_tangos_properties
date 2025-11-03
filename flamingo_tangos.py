@@ -210,17 +210,32 @@ class FlamingoInputHandler(tangos.input_handlers.pynbody.Gadget4HDFSubfindInputH
 
 
 class StarForm(spherical_region.SphericalRegionPropertyCalculation):
-    names = "central_SFR_100Myr", "central_Mstar"
+    names = "central_SFR", "central_Mstar"
 
     @centred_calculation
-    def calculate(self, halo, existing_properties):
-        halo = halo.star
+    def calculate(self, ptcls, existing_properties):
+        ptcls = ptcls.star
 
-        tform = halo['tform'].in_units("Gyr")
-        t_now = tform.max()
-        mask_100Myr = (t_now-tform)<0.1
-        # Because physical_units has been called previously, mass is in Msol. Return results in Msol/yr.
-        return halo['mass'][mask_100Myr].sum()/1e8, halo['mass'].sum()
+        tform = ptcls['tform'].in_units("Gyr")
+        t_now = ptcls.properties['time'].in_units("Gyr", a=1) 
+
+        age = tform-t_now 
+
+        # ugly hack in case of numerical imprecision causing negative ages:
+        if age.min() < 0:
+            age-=age.min() 
+
+        # get a SFR over either the last 0.1 Gyr, 0.5 Gyr, 1 Gyr or 2 Gyr, whichever is shortest with >2 particles:
+        candidate_times = [0.1, 0.5, 1.0, 2.0, 5.0]  # in Gyr
+        sfr = 0.0 # default
+        require_particles = 2
+        for dt in candidate_times:
+            mask = (t_now - tform) < dt
+            if mask.sum() > require_particles:
+                sfr = ptcls['mass'][mask].sum() / (dt * 1e9)  # Msol/yr
+                break
+
+        return sfr, ptcls['mass'].sum()
     
     def region_specification(self, db_data):
         return pynbody.filt.Sphere("30 kpc", db_data['shrink_center'])
@@ -238,6 +253,20 @@ class M200m(LiveHaloProperties):
 
     def requires_property(self):
         return super().requires_property() + ['r200m']
+    
+class SSFR(LiveHaloProperties):
+    names = "sSFR", 
+
+    def calculate(self, data, existing_properties):
+        sfr = existing_properties['central_SFR_100Myr']  # in Msol/yr
+        mstar = existing_properties['central_Mstar']     # in Msol
+        if mstar > 0:
+            return sfr / mstar,   # in yr^-1
+        else:
+            return 0.0, 
+
+    def requires_property(self):
+        return ['central_SFR_100Myr', 'central_Mstar'] + super().requires_property()
 
 class RadialVelocityProfile(spherical_region.SphericalRegionPropertyCalculation):
     names = "gas_vr", "gas_vr_disp"
