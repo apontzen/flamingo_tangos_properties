@@ -217,20 +217,16 @@ class StarForm(spherical_region.SphericalRegionPropertyCalculation):
         ptcls = ptcls.star
 
         tform = ptcls['tform'].in_units("Gyr")
-        t_now = ptcls.properties['time'].in_units("Gyr", a=1) 
+        t_now = pynbody.analysis.cosmology.age(ptcls)
 
-        age = tform-t_now 
-
-        # ugly hack in case of numerical imprecision causing negative ages:
-        if age.min() < 0:
-            age-=age.min() 
+        age = t_now - tform
 
         # get a SFR over either the last 0.1 Gyr, 0.5 Gyr, 1 Gyr or 2 Gyr, whichever is shortest with >2 particles:
         candidate_times = [0.1, 0.5, 1.0, 2.0, 5.0]  # in Gyr
         sfr = 0.0 # default
         require_particles = 2
         for dt in candidate_times:
-            mask = (t_now - tform) < dt
+            mask = age < dt
             if mask.sum() > require_particles:
                 sfr = ptcls['mass'][mask].sum() / (dt * 1e9)  # Msol/yr
                 break
@@ -258,7 +254,7 @@ class SSFR(LiveHaloProperties):
     names = "sSFR", 
 
     def calculate(self, data, existing_properties):
-        sfr = existing_properties['central_SFR_100Myr']  # in Msol/yr
+        sfr = existing_properties['central_SFR']  # in Msol/yr
         mstar = existing_properties['central_Mstar']     # in Msol
         if mstar > 0:
             return sfr / mstar,   # in yr^-1
@@ -266,7 +262,7 @@ class SSFR(LiveHaloProperties):
             return 0.0, 
 
     def requires_property(self):
-        return ['central_SFR_100Myr', 'central_Mstar'] + super().requires_property()
+        return ['central_SFR', 'central_Mstar'] + super().requires_property()
 
 class RadialVelocityProfile(spherical_region.SphericalRegionPropertyCalculation):
     names = "gas_vr", "gas_vr_disp"
