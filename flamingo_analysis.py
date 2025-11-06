@@ -17,16 +17,40 @@ def get_labels(ts, property_name):
     xlab = prop.plot_xlabel()
     return xlab, ylabs[prop.index_of_name(property_name)]
 
-def get_stack(property_name, M_min, M_max, use_log=False, timestep_name="L0200%HYDRO%/%8%",
+def get_stack(property_name, M_min, M_max, sSFR_cut=None, earlier=None,
+            use_log=False, timestep_name="L0200%HYDRO%/%8%",
               use_percentile=None,weight_by=None):
     ts = db.get_timestep(timestep_name)
+
+    if sSFR_cut is not None:
+        M_and_sSFR = 'M200m()', 'sSFR()'
+    else:
+        M_and_sSFR = 'M200m()',
+
+    if earlier is not None:
+        property_name_with_rel = f"earlier({earlier}).{property_name}"
+    else:
+        property_name_with_rel = property_name
+
     if weight_by:
-        M200m, profiles, weights = ts.calculate_all('M200m()', property_name, weight_by)
+        profiles, weights, *M_and_sSFR = ts.calculate_all(property_name_with_rel, weight_by, *M_and_sSFR)
         profiles *= weights
     else:
-        M200m, profiles = ts.calculate_all('M200m()', property_name)
+        profiles, *M_and_sSFR = ts.calculate_all(property_name_with_rel, *M_and_sSFR)
 
-    mask = (M200m>10**M_min)*(M200m<10**M_max)
+    if sSFR_cut is not None:
+        M200m, sSFR = M_and_sSFR
+        mask = (M200m>10**M_min)*(M200m<10**M_max)
+        if sSFR_cut == 'quenched':
+            mask *= (sSFR < 3e-11)
+        elif sSFR_cut == 'star-forming':
+            mask *= (sSFR >= 3e-11)
+        else:
+            raise ValueError("sSFR_cut must be 'quenched' or 'star-forming'")
+    else:
+        M200m, = M_and_sSFR
+        mask = (M200m>10**M_min)*(M200m<10**M_max)
+
     num_included = mask.sum()
     if num_included == 0 :
         raise NoHalosInStackError("No halos in stack")
@@ -201,7 +225,7 @@ def make_plot(name='rho', M_min=12.5, M_max=13.0, with_guide=False,
 
 #ranges = [(11.8, 12.2), (12.6, 13.0), (13.0, 13.5), (13.5, 14.0), (14.0, 15.0)]
 ranges = [(12.5, 13.0), (13.0, 13.5), (13.5, 14.0), (14.0, 15.0)]
-ranges = [(12.0, 12.5), (13.0, 13.5), (14.0, 14.5)]
+#ranges = [(12.0, 12.5), (13.0, 13.5), (14.0, 14.5)]
 vars = ['density', 'entropy', 'temp', 'p']
 plot_guides_for = ['density', 'entropy', 'temp', 'p']
 
