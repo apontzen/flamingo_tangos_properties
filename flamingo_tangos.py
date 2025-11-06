@@ -208,6 +208,22 @@ class FlamingoInputHandler(tangos.input_handlers.pynbody.Gadget4HDFSubfindInputH
             return super().match_objects(ts1, ts2, halo_min, halo_max, dm_only, threshold, object_typetag,
                                          output_handler_for_ts2, fuzzy_match_kwa)
 
+    def _soap_filename(self, ts_extension):
+        filepath = pathlib.Path(self._extension_to_filename(ts_extension))
+        parent_dir = filepath.parent
+        snapnum = int(filepath.stem.split("_")[-1])
+        soap_filename = parent_dir / "SOAP-HBT" / f"halo_properties_{snapnum:04d}.hdf5"
+        return str(soap_filename)
+    
+    def iterate_object_properties_for_timestep(self, ts_extension, object_typetag, property_names):
+        import h5py
+        if object_typetag != 'halo':
+            return super().iterate_object_properties_for_timestep(ts_extension, object_typetag, property_names)
+        property_names = [p.replace('_','/') for p in property_names]
+        with h5py.File(self._soap_filename(ts_extension), 'r') as f_soap:
+            h5py_names = ["InputHalos/HaloCatalogueIndex", "InputHalos/HaloCatalogueIndex"] + property_names
+            h5py_datasets = [f_soap[name] for name in h5py_names]
+            yield from zip(*h5py_datasets)
 
 class StarForm(spherical_region.SphericalRegionPropertyCalculation):
     names = "central_SFR", "central_Mstar"
