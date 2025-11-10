@@ -17,38 +17,55 @@ def get_labels(ts, property_name):
     xlab = prop.plot_xlabel()
     return xlab, ylabs[prop.index_of_name(property_name)]
 
-def get_stack(property_name, M_min, M_max, sSFR_cut=None, earlier=None,
+def get_stack(property_name, M_min, M_max, cut=None, earlier=None,
             use_log=False, timestep_name="L0200%HYDRO%/%8%",
               use_percentile=None,weight_by=None):
     ts = db.get_timestep(timestep_name)
 
-    if sSFR_cut is not None:
-        M_and_sSFR = 'M200m()', 'sSFR()'
+    if cut is not None:
+        # cut should be of the form: (variable, 'upper' or 'lower')
+        # verify:
+        if not (isinstance(cut, tuple) and (len(cut) == 2 or len(cut) == 3)):
+            raise ValueError("Cut must be of the form (variable, 'upper', [value]) or (variable, 'lower', [value])")
+        if len(cut) == 2:
+            cut_variable, cut_upper_or_lower = cut
+            cut_value = None
+        else:
+            cut_variable, cut_upper_or_lower, cut_value = cut
+        M_and_cutvar = 'M200m()', cut_variable
     else:
-        M_and_sSFR = 'M200m()',
+        M_and_cutvar = 'M200m()',
 
     if earlier is not None:
-        property_name_with_rel = f"earlier({earlier}).{property_name}"
+        if earlier>0:
+            property_name_with_rel = f"earlier({earlier}).{property_name}"
+        elif earlier<0:
+            property_name_with_rel = f"later({-earlier}).{property_name}"
+        else:
+            property_name_with_rel = property_name
     else:
         property_name_with_rel = property_name
 
     if weight_by:
-        profiles, weights, *M_and_sSFR = ts.calculate_all(property_name_with_rel, weight_by, *M_and_sSFR)
+        profiles, weights, *M_and_cutvar = ts.calculate_all(property_name_with_rel, weight_by, *M_and_cutvar)
         profiles *= weights
     else:
-        profiles, *M_and_sSFR = ts.calculate_all(property_name_with_rel, *M_and_sSFR)
+        profiles, *M_and_cutvar = ts.calculate_all(property_name_with_rel, *M_and_cutvar)
 
-    if sSFR_cut is not None:
-        M200m, sSFR = M_and_sSFR
+    if cut is not None:
+        M200m, cut_var = M_and_cutvar
         mask = (M200m>10**M_min)*(M200m<10**M_max)
-        if sSFR_cut == 'quenched':
-            mask *= (sSFR < 3e-11)
-        elif sSFR_cut == 'star-forming':
-            mask *= (sSFR >= 3e-11)
+        if cut_value is None:
+            cut_value = np.median(cut_var[mask])
+            print(f"Median {cut_variable} for halos with 10^{M_min} < M200m/Msol < 10^{M_max} is {cut_value:.3e}")
+        if cut_upper_or_lower == 'upper':
+            mask *= (cut_var < cut_value)
+        elif cut_upper_or_lower == 'lower':
+            mask *= (cut_var >= cut_value)
         else:
-            raise ValueError("sSFR_cut must be 'quenched' or 'star-forming'")
+            raise ValueError("Cut must be of the form (variable, 'upper') or (variable, 'lower')")
     else:
-        M200m, = M_and_sSFR
+        M200m, = M_and_cutvar
         mask = (M200m>10**M_min)*(M200m<10**M_max)
 
     num_included = mask.sum()
@@ -173,9 +190,9 @@ def make_plot(name='rho', M_min=12.5, M_max=13.0, with_guide=False,
 
     plot_kwargs = {'label': f"$10^{{{M_min}}} < M_{{200m}} / M_{{\\odot}} < 10^{{{M_max}}}$"} | plot_kwargs
     if name == 'mdot':
-        main_line = p.plot(r, -profile, **plot_kwargs)
-        # plot +profile as dashed:
-        p.plot(r, profile, linestyle='--', color=main_line[0].get_color())
+        main_line = p.plot(r, profile, **plot_kwargs)
+        p.plot(r, -profile, color=main_line[0].get_color(), 
+               **(plot_kwargs | {'alpha': 0.2, 'label': '_nolegend_'}))
     else:
         main_line = p.plot(r, profile, **plot_kwargs)
     p.fill_between(r, profile-uncertainty, profile+uncertainty, alpha=0.2)
@@ -184,6 +201,9 @@ def make_plot(name='rho', M_min=12.5, M_max=13.0, with_guide=False,
         p.semilogx()
     else:
         p.loglog()
+
+    if name == 'mdot':
+        p.ylim(bottom=10.0)
 
     
     
@@ -224,10 +244,22 @@ def make_plot(name='rho', M_min=12.5, M_max=13.0, with_guide=False,
                   )
 
 #ranges = [(11.8, 12.2), (12.6, 13.0), (13.0, 13.5), (13.5, 14.0), (14.0, 15.0)]
-ranges = [(12.5, 13.0), (13.0, 13.5), (13.5, 14.0), (14.0, 15.0)]
+#ranges = [(12.5, 13.0), (13.0, 13.5), (13.5, 14.0), (14.0, 15.0)]
 #ranges = [(12.0, 12.5), (13.0, 13.5), (14.0, 14.5)]
+ranges = [(12.95, 13.05)]
 vars = ['density', 'entropy', 'temp', 'p']
 plot_guides_for = ['density', 'entropy', 'temp', 'p']
+
+def make_histogram(histogram_property, tsnum=8, box="L0200N0720_HYDRO_FIDUCIAL"):
+    timestep_name = f"{box}/%{tsnum}.hdf5"
+    ts = db.get_timestep(timestep_name)
+    mass, property = ts.calculate_all('M200m()', histogram_property)
+    property[~np.isfinite(property)] = np.min(property[np.isfinite(property)]) 
+    for i, ra in enumerate(ranges):
+        mask = (mass > 10**ra[0]) & (mass < 10**ra[1]) 
+        p.hist(property[mask], bins=30, histtype='step', label=f"$10^{{{ra[0]}}} < M_{{200m}} / M_{{\\odot}} < 10^{{{ra[1]}}}$")
+    p.xlabel(histogram_property)
+    p.ylabel("Number of halos")
 
 def make_profile_plots(v, tsnum=8, box="L0200N0720_HYDRO_FIDUCIAL", 
                        newfig=True, with_exclusive=False, norm_guide=False, 
@@ -238,7 +270,15 @@ def make_profile_plots(v, tsnum=8, box="L0200N0720_HYDRO_FIDUCIAL",
     if newfig:
         p.figure(figsize=(12, 5))
     p.subplot(121)
-    p.title(f"Relative radius profiles ($z={z:.1f}$)")
+
+    redshift_label = f"$z={z:.1f}$"
+    if 'earlier' in get_stack_kwargs:
+        earlier = int(get_stack_kwargs['earlier'])
+        tsnum_earlier = tsnum - earlier
+        z_earlier = db.get_timestep(f"{box}/%{tsnum_earlier}.hdf5").redshift
+        redshift_label = f"sel@{redshift_label}, plot@${z_earlier:.1f}$"
+
+    p.title(f"Relative radius profiles ({redshift_label})")
     p.gca().set_prop_cycle(None)
     for i, ra in enumerate(ranges):
         with_guide = i == 3 and v in plot_guides_for
@@ -250,7 +290,7 @@ def make_profile_plots(v, tsnum=8, box="L0200N0720_HYDRO_FIDUCIAL",
         p.legend()
     p.subplot(122)
     p.gca().set_prop_cycle(None)
-    p.title(f"Absolute radius profiles ($z={z:.1f}$)")
+    p.title(f"Absolute radius profiles ({redshift_label})")
     for i, ra in enumerate(ranges):
         with_guide = i == 3 and v in plot_guides_for
         make_plot(v, ra[0], ra[1], with_guide=with_guide, with_exclusive=with_exclusive, relative=False,
@@ -259,6 +299,12 @@ def make_profile_plots(v, tsnum=8, box="L0200N0720_HYDRO_FIDUCIAL",
 
     if newfig:
         p.legend()
+
+def make_profile_plots_with_cut(v, cut_variable, **kwargs):
+    get_stack_kwargs = kwargs.get('get_stack_kwargs', {}) | {'cut': (cut_variable, 'upper')}
+    make_profile_plots(v, **kwargs | {'get_stack_kwargs': get_stack_kwargs})
+    get_stack_kwargs = kwargs.get('get_stack_kwargs', {}) | {'cut': (cut_variable, 'lower')}
+    make_profile_plots(v, **kwargs | {'get_stack_kwargs': get_stack_kwargs, 'plot_kwargs': {'linestyle': '--'}, 'newfig': False})
 
 def cosmic_density(redshift, particle):
     match particle:

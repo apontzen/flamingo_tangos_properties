@@ -10,7 +10,7 @@ import numpy as np
 import pathlib
 import tqdm
 
-from typing import Generator
+from typing import Iterator, Union
 from collections import defaultdict 
 
 __version__ = "0.1.0"
@@ -91,7 +91,7 @@ class FlamingoInputHandler(tangos.input_handlers.pynbody.Gadget4HDFSubfindInputH
         return h
 
     @classmethod
-    def _sim_filename_to_hbt_filename_candidates(cls, sim_filename : pathlib.Path | str) -> Generator[pathlib.Path]:
+    def _sim_filename_to_hbt_filename_candidates(cls, sim_filename : Union[pathlib.Path, str]) -> Iterator[pathlib.Path]:
         """e.g. /path/to/simname_0004.hdf5 -> /path/to/HBT/004/SubSnap_004"""
         if isinstance(sim_filename, str):
             sim_filename = pathlib.Path(sim_filename)
