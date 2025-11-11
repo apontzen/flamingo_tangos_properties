@@ -142,6 +142,28 @@ def make_flow_ratio_plots(prop_name = 'gas_mdot_inflow', tsnum=1):
     p.title("Inflow Ratio Profile")
     p.legend()
 
+def make_entropy_radius_stack(M_min=12.5, M_max=13.0, box="L0200N0360_HYDRO_FIDUCIAL", tsnum=8, restriction=None, normed=True):
+    property_name = 'gas_entropy_radius_histogram'
+    if restriction is not None:
+        property_name += f"_{restriction}"
+    print(f"Stacking {property_name} for {box} at ts {tsnum} for 10^{M_min} < M200m/Msol < 10^{M_max}")
+    profile, mass = db.get_timestep(f"{box}/%{tsnum}.hdf5").calculate_all(property_name, 'M200m()')
+    mask = (mass > 10**M_min) & (mass < 10**M_max)
+    if mask.sum() == 0:
+        raise NoHalosInStackError("No halos in stack")
+    stacked_profile = np.nansum([p for p in profile[mask]], axis=0)
+    extent = [np.log10(0.05), np.log10(5.0), np.log10(10), np.log10(10**4)]
+    if normed:
+        stacked_profile /= np.sum(stacked_profile, axis=1, keepdims=True)
+
+    p.imshow(stacked_profile.T, aspect='auto', origin='lower', extent=extent)
+    r_bins = np.logspace(np.log10(0.05), np.log10(5.0), stacked_profile.shape[0])
+    entropy_bins = np.logspace(np.log10(10), np.log10(10**4), stacked_profile.shape[1])
+    mean_entropy = (entropy_bins[np.newaxis, :] * stacked_profile).sum(axis=1) / stacked_profile.sum(axis=1)
+    p.plot(np.log10(r_bins), np.log10(mean_entropy), color='red', label='Mean Entropy')
+    p.xlabel('log10(r)')
+    p.ylabel('log10(entropy)')
+
 def make_plot(name='rho', M_min=12.5, M_max=13.0, with_guide=False,
               relative=True, exclusive=False, with_exclusive=False,
               with_alternative_ts=None, particle='gas',

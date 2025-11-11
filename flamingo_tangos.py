@@ -433,7 +433,7 @@ class FlamingoDensityProfileBase(spherical_region.SphericalRegionPropertyCalcula
     def requires_property(self):
         return ["shrink_center", self._radius_name]+super().requires_property()
 
-class FlamingoEntropyRadiusHistogram(spherical_region.SphericalRegionHaloProperties):
+class FlamingoEntropyRadiusHistogram(FlamingoDensityProfileBase):
     _nbins = 25 # in both dimensions
     _min_rad = 0.05 # Mpc
     _max_rad = 5.0  # Mpc
@@ -444,6 +444,8 @@ class FlamingoEntropyRadiusHistogram(spherical_region.SphericalRegionHaloPropert
 
     @centred_calculation
     def calculate(self, data, existing_properties):
+        vel_centre = self._get_velocity_centre(data)
+
         minrad = self._min_rad * 1e3  # convert to kpc
         maxrad = self._max_rad * 1e3
 
@@ -455,9 +457,13 @@ class FlamingoEntropyRadiusHistogram(spherical_region.SphericalRegionHaloPropert
         entropy_bins = np.logspace(np.log10(self._min_entropy), np.log10(self._max_entropy), self._nbins+1)
 
         histogram, _, _ = np.histogram2d(gas['r'], gas['Entropies'], bins=[radial_bins, entropy_bins], weights=gas['mass'])
-
-        outflow_mask = gas['vr'] > 0
-        inflow_mask = gas['vr'] < 0
+        
+        try:
+            data['vel']-=vel_centre
+            outflow_mask = gas['vr'] > 0
+            inflow_mask = gas['vr'] < 0
+        finally:
+            data['vel'] += vel_centre
         histogram_outflow, _, _ = np.histogram2d(gas['r'][outflow_mask], gas['Entropies'][outflow_mask],
                                                  bins=[radial_bins, entropy_bins], weights=gas['mass'][outflow_mask])
         histogram_inflow, _, _ = np.histogram2d(gas['r'][inflow_mask], gas['Entropies'][inflow_mask],
@@ -468,6 +474,9 @@ class FlamingoEntropyRadiusHistogram(spherical_region.SphericalRegionHaloPropert
     def region_specification(self, db_data):
         TOLERANCE = 1.1
         return pynbody.filt.Sphere(self._max_rad*1000*TOLERANCE, db_data['shrink_center'])
+    
+    def requires_property(self):
+        return ["shrink_center"] 
 
 class FlamingoDensityProfileRelative(FlamingoDensityProfileBase):
     _min_rad = 0.05 # Minimum radius in units of r200m 
