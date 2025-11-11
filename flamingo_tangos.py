@@ -440,7 +440,7 @@ class FlamingoEntropyRadiusHistogram(spherical_region.SphericalRegionHaloPropert
     _min_entropy = 10.0 # in sim units
     _max_entropy = 1e4 # in sim units
 
-    names = "gas_entropy_radius_histogram", 
+    names = "gas_entropy_radius_histogram", "gas_entropy_radius_histogram_outflow", "gas_entropy_radius_histogram_inflow"
 
     @centred_calculation
     def calculate(self, data, existing_properties):
@@ -456,7 +456,14 @@ class FlamingoEntropyRadiusHistogram(spherical_region.SphericalRegionHaloPropert
 
         histogram, _, _ = np.histogram2d(gas['r'], gas['Entropies'], bins=[radial_bins, entropy_bins], weights=gas['mass'])
 
-        return histogram, 
+        outflow_mask = gas['vr'] > 0
+        inflow_mask = gas['vr'] < 0
+        histogram_outflow, _, _ = np.histogram2d(gas['r'][outflow_mask], gas['Entropies'][outflow_mask],
+                                                 bins=[radial_bins, entropy_bins], weights=gas['mass'][outflow_mask])
+        histogram_inflow, _, _ = np.histogram2d(gas['r'][inflow_mask], gas['Entropies'][inflow_mask],
+                                                 bins=[radial_bins, entropy_bins], weights=gas['mass'][inflow_mask])
+
+        return histogram, histogram_outflow, histogram_inflow
 
     def region_specification(self, db_data):
         TOLERANCE = 1.1
