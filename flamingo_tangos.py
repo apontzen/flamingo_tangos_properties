@@ -280,6 +280,7 @@ class SSFR(LiveHaloProperties):
     def requires_property(self):
         return ['central_SFR', 'central_Mstar'] + super().requires_property()
 
+
 class RadialVelocityProfile(spherical_region.SphericalRegionPropertyCalculation):
     names = "gas_vr", "gas_vr_disp"
 
@@ -431,7 +432,36 @@ class FlamingoDensityProfileBase(spherical_region.SphericalRegionPropertyCalcula
 
     def requires_property(self):
         return ["shrink_center", self._radius_name]+super().requires_property()
-        
+
+class FlamingoEntropyRadiusHistogram(spherical_region.SphericalRegionHaloProperties):
+    _nbins = 25 # in both dimensions
+    _min_rad = 0.05 # Mpc
+    _max_rad = 5.0  # Mpc
+    _min_entropy = 10.0 # in sim units
+    _max_entropy = 1e4 # in sim units
+
+    names = "gas_entropy_radius_histogram", 
+
+    @centred_calculation
+    def calculate(self, data, existing_properties):
+        minrad = self._min_rad * 1e3  # convert to kpc
+        maxrad = self._max_rad * 1e3
+
+        gas = data.gas
+        mask = (gas['r'] >= minrad) & (gas['r'] <= maxrad) 
+        gas = gas[mask]
+
+        radial_bins = np.logspace(np.log10(minrad), np.log10(maxrad), self._nbins+1)
+        entropy_bins = np.logspace(np.log10(self._min_entropy), np.log10(self._max_entropy), self._nbins+1)
+
+        histogram, _, _ = np.histogram2d(gas['r'], gas['Entropies'], bins=[radial_bins, entropy_bins], weights=gas['mass'])
+
+        return histogram, 
+
+    def region_specification(self, db_data):
+        TOLERANCE = 1.1
+        return pynbody.filt.Sphere(self._max_rad*1000*TOLERANCE, db_data['shrink_center'])
+
 class FlamingoDensityProfileRelative(FlamingoDensityProfileBase):
     _min_rad = 0.05 # Minimum radius in units of r200m 
     _max_rad = 5.0  # Maximum radius in units of r200m
@@ -461,6 +491,38 @@ class FlamingoDensityProfileAbsolute(FlamingoDensityProfileBase):
     def plot_xdelta(self):
         return np.log10(self._max_rad/self._min_rad)/self._nbins
     
+
+class RelativeInflowEquivalentRate(LiveHaloProperties, FlamingoDensityProfileRelative):
+    names = "gas_inflow_equivalent_rate_r200m_relative",
+    def calculate(self, data, existing_properties):
+        return existing_properties['gas_mdot_inflow_r200m_relative'] * existing_properties['gas_entropy_inflow_r200m_relative'], 
+    
+    def requires_property(self):
+        return ['gas_mdot_inflow_r200m_relative', 'gas_entropy_inflow_r200m_relative'] + super().requires_property()
+    
+class AbsoluteInflowEquivalentRate(LiveHaloProperties, FlamingoDensityProfileAbsolute):
+    names = "gas_inflow_equivalent_rate",
+    def calculate(self, data, existing_properties):
+        return existing_properties['gas_mdot_inflow'] * existing_properties['gas_entropy_inflow'],
+    
+    def requires_property(self):
+        return ['gas_mdot_inflow', 'gas_entropy_inflow'] + super().requires_property()
+
+class RelativeOutflowEquivalentRate(LiveHaloProperties, FlamingoDensityProfileRelative):
+    names = "gas_outflow_equivalent_rate_r200m_relative",
+    def calculate(self, data, existing_properties):
+        return existing_properties['gas_mdot_outflow_r200m_relative'] * existing_properties['gas_entropy_outflow_r200m_relative'],
+    
+    def requires_property(self):
+        return ['gas_mdot_outflow_r200m_relative', 'gas_entropy_outflow_r200m_relative'] + super().requires_property()    
+class AbsoluteOutflowEquivalentRate(LiveHaloProperties, FlamingoDensityProfileAbsolute):
+    names = "gas_outflow_equivalent_rate",
+    def calculate(self, data, existing_properties):
+        return existing_properties['gas_mdot_outflow'] * existing_properties['gas_entropy_outflow'], 
+
+    def requires_property(self):
+        return ['gas_mdot_outflow', 'gas_entropy_outflow'] + super().requires_property()
+
 def _filter_out_other_halos(data, existing_properties):
     halo_number = np.median(data[pynbody.filt.Sphere('10 kpc', existing_properties['shrink_center'])]['grp'])
     data_exclusive = data[(data['grp'] == halo_number) | (data['grp'] == 2**31 - 1)]

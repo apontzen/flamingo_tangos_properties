@@ -8,15 +8,21 @@ class NoHalosInStackError(ValueError):
     pass
 
 def get_xs(ts, property_name, profile):
-    prop = ts.halos[2].get_description(property_name)
-    return prop.plot_x_values(profile)
-        
+    try:
+        prop = ts.halos[2].get_description(property_name)
+        return prop.plot_x_values(profile)
+    except:
+        num_bins = len(profile)
+        return np.linspace(np.log10(0.01), np.log10(3.0), num_bins)
+    
 def get_labels(ts, property_name):
-    prop = ts.halos[2].get_description(property_name)
-    ylabs = prop.plot_ylabel()
-    xlab = prop.plot_xlabel()
-    return xlab, ylabs[prop.index_of_name(property_name)]
-
+    try:
+        prop = ts.halos[2].get_description(property_name)
+        ylabs = prop.plot_ylabel()
+        xlab = prop.plot_xlabel()
+        return xlab, ylabs[prop.index_of_name(property_name)]
+    except:
+        return "?", "?"
 def get_stack(property_name, M_min, M_max, cut=None, earlier=None,
             use_log=False, timestep_name="L0200%HYDRO%/%8%",
               use_percentile=None,weight_by=None):
@@ -59,9 +65,9 @@ def get_stack(property_name, M_min, M_max, cut=None, earlier=None,
             cut_value = np.median(cut_var[mask])
             print(f"Median {cut_variable} for halos with 10^{M_min} < M200m/Msol < 10^{M_max} is {cut_value:.3e}")
         if cut_upper_or_lower == 'upper':
-            mask *= (cut_var < cut_value)
+            mask *= (cut_var > cut_value)
         elif cut_upper_or_lower == 'lower':
-            mask *= (cut_var >= cut_value)
+            mask *= (cut_var <= cut_value)
         else:
             raise ValueError("Cut must be of the form (variable, 'upper') or (variable, 'lower')")
     else:
@@ -93,6 +99,8 @@ def get_stack(property_name, M_min, M_max, cut=None, earlier=None,
 def _get_mean_of_profiles(profiles, use_log, mask):
     log_profiles = []
     for p in profiles[mask]:
+        if (p<0).sum() > (p>0).sum():
+            p = -p
         ln_p = np.log(p)
         ln_p[ln_p==-np.inf] = np.nan
         log_profiles.append(ln_p)
@@ -140,6 +148,12 @@ def make_plot(name='rho', M_min=12.5, M_max=13.0, with_guide=False,
               get_stack_kwargs={}, 
               plot_kwargs={}, norm_guide=False):
     
+    if name.endswith("()"):
+        is_function = True
+        name = name[:-2]
+    else:
+        is_function = False
+    
     # Determine base property name
     if relative:
         prop_name = f'{name}_r200m_relative'
@@ -168,6 +182,9 @@ def make_plot(name='rho', M_min=12.5, M_max=13.0, with_guide=False,
         
     else:
         prop_name = f'{particle}_{prop_name}'
+
+        if is_function:
+            prop_name += '()'
         
         try:
             profile, uncertainty, xs, labels = get_stack(prop_name, M_min, M_max, **get_stack_kwargs)
@@ -246,7 +263,7 @@ def make_plot(name='rho', M_min=12.5, M_max=13.0, with_guide=False,
 #ranges = [(11.8, 12.2), (12.6, 13.0), (13.0, 13.5), (13.5, 14.0), (14.0, 15.0)]
 #ranges = [(12.5, 13.0), (13.0, 13.5), (13.5, 14.0), (14.0, 15.0)]
 #ranges = [(12.0, 12.5), (13.0, 13.5), (14.0, 14.5)]
-ranges = [(12.95, 13.05)]
+ranges = [(12.6, 12.8), (12.9, 13.1), (13.2, 13.4), (13.5, 13.7)]
 vars = ['density', 'entropy', 'temp', 'p']
 plot_guides_for = ['density', 'entropy', 'temp', 'p']
 
@@ -300,10 +317,17 @@ def make_profile_plots(v, tsnum=8, box="L0200N0720_HYDRO_FIDUCIAL",
     if newfig:
         p.legend()
 
-def make_profile_plots_with_cut(v, cut_variable, **kwargs):
-    get_stack_kwargs = kwargs.get('get_stack_kwargs', {}) | {'cut': (cut_variable, 'upper')}
+def make_profile_plots_with_cut(v, cut_variable, cut_value=None, **kwargs):
+    if cut_value is not None:
+        cut_upper = (cut_variable, 'upper', cut_value)
+        cut_lower = (cut_variable, 'lower', cut_value)
+    else:
+        cut_upper = (cut_variable, 'upper')
+        cut_lower = (cut_variable, 'lower')
+
+    get_stack_kwargs = kwargs.get('get_stack_kwargs', {}) | {'cut': cut_upper}
     make_profile_plots(v, **kwargs | {'get_stack_kwargs': get_stack_kwargs})
-    get_stack_kwargs = kwargs.get('get_stack_kwargs', {}) | {'cut': (cut_variable, 'lower')}
+    get_stack_kwargs = kwargs.get('get_stack_kwargs', {}) | {'cut': cut_lower}
     make_profile_plots(v, **kwargs | {'get_stack_kwargs': get_stack_kwargs, 'plot_kwargs': {'linestyle': '--'}, 'newfig': False})
 
 def cosmic_density(redshift, particle):
