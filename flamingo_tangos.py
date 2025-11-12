@@ -300,7 +300,8 @@ class FlamingoDensityProfileBase(spherical_region.SphericalRegionPropertyCalcula
             "_dm_mass_enclosed", "_dm_mass_enclosed_2d", "_dm_vr", "_dm_vr_disp", \
             "_gas_mdot", "_gas_mdot_inflow", "_gas_mdot_outflow", \
             "_dm_mdot", "_dm_mdot_inflow", "_dm_mdot_outflow", "_gas_entropy_outflow", "_gas_entropy_inflow", \
-            "_gas_temp_outflow", "_gas_temp_inflow", "_gas_density_outflow", "_gas_density_inflow"
+            "_gas_temp_outflow", "_gas_temp_inflow", "_gas_density_outflow", "_gas_density_inflow", \
+            "_gas_vr_inflow", "_gas_vr_outflow", "_gas_cs"
 
 
     _nbins = 50
@@ -322,9 +323,10 @@ class FlamingoDensityProfileBase(spherical_region.SphericalRegionPropertyCalcula
 
         try:
             data['vel']-=vel_centre
-            pynbody.analysis.cosmology.add_hubble(data) 
+            pynbody.analysis.cosmology.add_hubble(data)  
 
             data.gas['vol'] = data.gas['smooth']**3  # Volume for weighting
+            data.gas['abs_vr'] = abs(data.gas['vr'])  # |radial velocity| for weighting
 
             pro_vol_weighted = self._make_vol_weighted_profile(data.gas, minrad, maxrad)
             
@@ -333,24 +335,28 @@ class FlamingoDensityProfileBase(spherical_region.SphericalRegionPropertyCalcula
             data.gas['temp']
             data.gas['rho']
             data.gas['p']
+            data.gas['cs'].convert_units('km s^-1')
 
             den = pro_vol_weighted['density']
             p = pro_vol_weighted['p']
             entropy = pro_vol_weighted['Entropies']
             temp = pro_vol_weighted['temp']
             rho = pro_vol_weighted['rho']
+            cs = pro_vol_weighted['cs']
 
             filt_outflow = pynbody.filt.HighPass('vr', 0)
-            pro_vol_weighted_out = self._make_mdot_weighted_profile(data.gas[filt_outflow], minrad, maxrad)
-            entropy_out = pro_vol_weighted_out['Entropies']
-            temp_out = pro_vol_weighted_out['temp']
-            den_out = pro_vol_weighted_out['density']
+            pro_outflow_vr_weighted = self._make_vr_weighted_profile(data.gas[filt_outflow], minrad, maxrad)
+            entropy_out = pro_outflow_vr_weighted['Entropies']
+            temp_out = pro_outflow_vr_weighted['temp']
+            den_out = pro_outflow_vr_weighted['density']
+            vr_out = pro_outflow_vr_weighted['vr']
 
             filt_inflow = pynbody.filt.LowPass('vr', 0)
-            pro_vol_weighted_in = self._make_mdot_weighted_profile(data.gas[filt_inflow], minrad, maxrad)
-            entropy_in = pro_vol_weighted_in['Entropies']
-            temp_in = pro_vol_weighted_in['temp']
-            den_in = pro_vol_weighted_in['density']
+            pro_inflow_vr_weighted = self._make_vr_weighted_profile(data.gas[filt_inflow], minrad, maxrad)
+            entropy_in = pro_inflow_vr_weighted['Entropies']
+            temp_in = pro_inflow_vr_weighted['temp']
+            den_in = pro_inflow_vr_weighted['density']
+            vr_in = pro_inflow_vr_weighted['vr']
 
             vr, vr_disp, mass_enc, mdot, mdot_inflow, mdot_outflow, mass_enc_2d = self._get_profiles(data.gas, minrad, maxrad)
 
@@ -363,7 +369,7 @@ class FlamingoDensityProfileBase(spherical_region.SphericalRegionPropertyCalcula
 
         return den, p, entropy, temp, rho, vr, vr_disp, mass_enc, mass_enc_2d, mass_enc_dm, mass_enc_2d_dm, vr_dm, vr_disp_dm, \
                 mdot, mdot_inflow, mdot_outflow, mdot_dm, mdot_inflow_dm, mdot_outflow_dm, entropy_out, entropy_in, temp_out, \
-                temp_in, den_out, den_in 
+                temp_in, den_out, den_in, vr_in, vr_out, cs
 
 
     def _make_vol_weighted_profile(self, data, minrad, maxrad):
@@ -371,10 +377,10 @@ class FlamingoDensityProfileBase(spherical_region.SphericalRegionPropertyCalcula
                                                 min=minrad, max=maxrad, nbins=self._nbins,
                                                 weight_by='vol')
 
-    def _make_mdot_weighted_profile(self, data, minrad, maxrad):
+    def _make_vr_weighted_profile(self, data, minrad, maxrad):
         return pynbody.analysis.profile.Profile(data, type='log', ndim=3,
                                                 min=minrad, max=maxrad, nbins=self._nbins,
-                                                weight_by='vr') # assuming ~const particle mass
+                                                weight_by='abs_vr') # assuming ~const particle mass
 
     def _get_profiles(self, data, minrad, maxrad):
         pro_2d = pynbody.analysis.profile.Profile(data, type='log', ndim=3,
@@ -407,10 +413,10 @@ class FlamingoDensityProfileBase(spherical_region.SphericalRegionPropertyCalcula
         return "log_10 r/r_200m"
     
     def plot_x0(self):
-        return np.log10(self._min_rad)
+        return np.log10(self._min_rad) + self.plot_xdelta()/2
     
     def plot_xdelta(self):
-        return np.log10(self._max_rad/self._min_rad)/self._nbins
+        return np.log10(self._max_rad/self._min_rad)/(self._nbins)
 
     def plot_ylabel(self):
         return r"$\rho/M_{\odot}\,kpc^{-3}$", r"pressure/$M_{\odot} km^2 s^{-2} kpc^{-3}$", \
@@ -420,7 +426,8 @@ class FlamingoDensityProfileBase(spherical_region.SphericalRegionPropertyCalcula
                 r"$\dot{M}_{gas}/M_{\odot} yr^{-1}$", r"$\dot{M}_{gas,inflow}/M_{\odot} yr^{-1}$", r"$\dot{M}_{gas,outflow}/M_{\odot} yr^{-1}$", \
                 r"$\dot{M}_{dm}/M_{\odot} yr^{-1}$", r"$\dot{M}_{dm,inflow}/M_{\odot} yr^{-1}$", r"$\dot{M}_{dm,outflow}/M_{\odot} yr^{-1}$", \
                 r"entropy/$_{\rm outflow}M_{\odot}^{-2/3} kpc^2 km^2 s^{-2}$", r"entropy/$_{\rm inflow}M_{\odot}^{-2/3} kpc^2 km^2 s^{-2}$", \
-                r"T$_{\rm outflow}/K$", r"T$_{\rm inflow}/K$", r"$\rho_{\rm outflow}/M_{\odot} kpc^{-3}$", r"$\rho_{\rm inflow}/M_{\odot} kpc^{-3}$"
+                r"T$_{\rm outflow}/K$", r"T$_{\rm inflow}/K$", r"$\rho_{\rm outflow}/M_{\odot} kpc^{-3}$", r"$\rho_{\rm inflow}/M_{\odot} kpc^{-3}$", \
+                r"v$_{\rm inflow}/km s^{-1}$", r"v$_{\rm outflow}/km s^{-1}$", r"c$_s/km s^{-1}$"
 
     def plot_xlog(self):
         return False
@@ -434,11 +441,11 @@ class FlamingoDensityProfileBase(spherical_region.SphericalRegionPropertyCalcula
         return ["shrink_center", self._radius_name]+super().requires_property()
 
 class FlamingoEntropyRadiusHistogram(FlamingoDensityProfileBase):
-    _nbins = 25 # in both dimensions
+    _nbins = 30 # in both dimensions
     _min_rad = 0.05 # Mpc
     _max_rad = 5.0  # Mpc
     _min_entropy = 10.0 # in sim units
-    _max_entropy = 1e4 # in sim units
+    _max_entropy = 1e5 # in sim units
 
     names = "gas_entropy_radius_histogram", "gas_entropy_radius_histogram_outflow", "gas_entropy_radius_histogram_inflow"
 
@@ -456,18 +463,27 @@ class FlamingoEntropyRadiusHistogram(FlamingoDensityProfileBase):
         radial_bins = np.logspace(np.log10(minrad), np.log10(maxrad), self._nbins+1)
         entropy_bins = np.logspace(np.log10(self._min_entropy), np.log10(self._max_entropy), self._nbins+1)
 
-        histogram, _, _ = np.histogram2d(gas['r'], gas['Entropies'], bins=[radial_bins, entropy_bins], weights=gas['mass'])
-        
         try:
             data['vel']-=vel_centre
             outflow_mask = gas['vr'] > 0
             inflow_mask = gas['vr'] < 0
+
+            entrops = gas['Entropies']  
+
+            weights = gas['smooth']**3 # weight by volume for overall histogram
+
+            histogram, _, _ = np.histogram2d(gas['r'], entrops, bins=[radial_bins, entropy_bins], weights=weights)
+
+            weights = abs(gas['vr']) # weight by mass flux for outflow/inflow histograms
+
+            histogram_outflow, _, _ = np.histogram2d(gas['r'][outflow_mask], entrops[outflow_mask],
+                                                    bins=[radial_bins, entropy_bins], weights=weights[outflow_mask])
+            histogram_inflow, _, _ = np.histogram2d(gas['r'][inflow_mask], entrops[inflow_mask],
+                                                    bins=[radial_bins, entropy_bins], weights=weights[inflow_mask])
+        
         finally:
             data['vel'] += vel_centre
-        histogram_outflow, _, _ = np.histogram2d(gas['r'][outflow_mask], gas['Entropies'][outflow_mask],
-                                                 bins=[radial_bins, entropy_bins], weights=gas['mass'][outflow_mask])
-        histogram_inflow, _, _ = np.histogram2d(gas['r'][inflow_mask], gas['Entropies'][inflow_mask],
-                                                 bins=[radial_bins, entropy_bins], weights=gas['mass'][inflow_mask])
+        
 
         return histogram, histogram_outflow, histogram_inflow
 
@@ -502,7 +518,7 @@ class FlamingoDensityProfileAbsolute(FlamingoDensityProfileBase):
         return "log_10 r/Mpc"
     
     def plot_x0(self):
-        return np.log10(self._min_rad*1e-3) + np.log10(self._max_rad/self._min_rad)/self._nbins # outer bin
+        return np.log10(self._min_rad*1e-3) + self.plot_xdelta()/2
     
     def plot_xdelta(self):
         return np.log10(self._max_rad/self._min_rad)/self._nbins

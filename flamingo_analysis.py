@@ -10,7 +10,8 @@ class NoHalosInStackError(ValueError):
 def get_xs(ts, property_name, profile):
     try:
         prop = ts.halos[2].get_description(property_name)
-        return prop.plot_x_values(profile)
+        xs = prop.plot_x_values(profile)
+        return xs 
     except:
         num_bins = len(profile)
         return np.linspace(np.log10(0.01), np.log10(3.0), num_bins)
@@ -23,6 +24,7 @@ def get_labels(ts, property_name):
         return xlab, ylabs[prop.index_of_name(property_name)]
     except:
         return "?", "?"
+    
 def get_stack(property_name, M_min, M_max, cut=None, earlier=None,
             use_log=False, timestep_name="L0200%HYDRO%/%8%",
               use_percentile=None,weight_by=None):
@@ -144,6 +146,7 @@ def make_flow_ratio_plots(prop_name = 'gas_mdot_inflow', tsnum=1):
 
 def make_entropy_radius_stack(M_min=12.5, M_max=13.0, box="L0200N0360_HYDRO_FIDUCIAL", tsnum=8, restriction=None, normed=True):
     property_name = 'gas_entropy_radius_histogram'
+    
     if restriction is not None:
         property_name += f"_{restriction}"
     print(f"Stacking {property_name} for {box} at ts {tsnum} for 10^{M_min} < M200m/Msol < 10^{M_max}")
@@ -152,13 +155,20 @@ def make_entropy_radius_stack(M_min=12.5, M_max=13.0, box="L0200N0360_HYDRO_FIDU
     if mask.sum() == 0:
         raise NoHalosInStackError("No halos in stack")
     stacked_profile = np.nansum([p for p in profile[mask]], axis=0)
-    extent = [np.log10(0.05), np.log10(5.0), np.log10(10), np.log10(10**4)]
+
+    make_entropy_radius_histogram(stacked_profile, normed)
+
+def make_entropy_radius_histogram(stacked_profile, normed=True):
+    histclass = ft.FlamingoEntropyRadiusHistogram
+    extent = [np.log10(histclass._min_rad), np.log10(histclass._max_rad), np.log10(histclass._min_entropy), np.log10(histclass._max_entropy)]
     if normed:
         stacked_profile /= np.sum(stacked_profile, axis=1, keepdims=True)
 
     p.imshow(stacked_profile.T, aspect='auto', origin='lower', extent=extent)
-    r_bins = np.logspace(np.log10(0.05), np.log10(5.0), stacked_profile.shape[0])
-    entropy_bins = np.logspace(np.log10(10), np.log10(10**4), stacked_profile.shape[1])
+    r_bins = np.logspace(np.log10(histclass._min_rad), np.log10(histclass._max_rad), stacked_profile.shape[0]+1)
+    r_bins = 0.5 * (r_bins[1:] + r_bins[:-1])
+    entropy_bins = np.logspace(np.log10(histclass._min_entropy), np.log10(histclass._max_entropy), stacked_profile.shape[1]+1)
+    entropy_bins = 0.5 * (entropy_bins[1:] + entropy_bins[:-1])
     mean_entropy = (entropy_bins[np.newaxis, :] * stacked_profile).sum(axis=1) / stacked_profile.sum(axis=1)
     p.plot(np.log10(r_bins), np.log10(mean_entropy), color='red', label='Mean Entropy')
     p.xlabel('log10(r)')
@@ -283,9 +293,9 @@ def make_plot(name='rho', M_min=12.5, M_max=13.0, with_guide=False,
                   )
 
 #ranges = [(11.8, 12.2), (12.6, 13.0), (13.0, 13.5), (13.5, 14.0), (14.0, 15.0)]
-#ranges = [(12.5, 13.0), (13.0, 13.5), (13.5, 14.0), (14.0, 15.0)]
+ranges = [(12.5, 13.0), (13.0, 13.5), (13.5, 14.0), (14.0, 15.0)]
 #ranges = [(12.0, 12.5), (13.0, 13.5), (14.0, 14.5)]
-ranges = [(12.6, 12.8), (12.9, 13.1), (13.2, 13.4), (13.5, 13.7)]
+#ranges = [(12.6, 12.8), (12.9, 13.1), (13.2, 13.4), (13.5, 13.7)]
 vars = ['density', 'entropy', 'temp', 'p']
 plot_guides_for = ['density', 'entropy', 'temp', 'p']
 
