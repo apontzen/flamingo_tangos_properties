@@ -22,10 +22,11 @@ def get_labels(ts, property_name):
         ylabs = prop.plot_ylabel()
         xlab = prop.plot_xlabel()
         return xlab, ylabs[prop.index_of_name(property_name)]
-    except:
+    except Exception as e:
+        print(f"Error in get_labels: {e}")
         return "?", "?"
     
-def get_stack(property_name, M_min, M_max, cut=None, earlier=None,
+def get_stack(property_name, M_min, M_max, M_name='M200m()', cut=None, earlier=None,
             use_log=False, timestep_name="L0200%HYDRO%/%8%",
               use_percentile=None,weight_by=None):
     ts = db.get_timestep(timestep_name)
@@ -40,9 +41,9 @@ def get_stack(property_name, M_min, M_max, cut=None, earlier=None,
             cut_value = None
         else:
             cut_variable, cut_upper_or_lower, cut_value = cut
-        M_and_cutvar = 'M200m()', cut_variable
+        M_and_cutvar = M_name, cut_variable
     else:
-        M_and_cutvar = 'M200m()',
+        M_and_cutvar = M_name,
 
     if earlier is not None:
         if earlier>0:
@@ -56,9 +57,11 @@ def get_stack(property_name, M_min, M_max, cut=None, earlier=None,
 
     if weight_by:
         profiles, weights, *M_and_cutvar = ts.calculate_all(property_name_with_rel, weight_by, *M_and_cutvar)
-        profiles *= weights
+        
     else:
+        weights = None
         profiles, *M_and_cutvar = ts.calculate_all(property_name_with_rel, *M_and_cutvar)
+        
 
     if cut is not None:
         M200m, cut_var = M_and_cutvar
@@ -81,9 +84,13 @@ def get_stack(property_name, M_min, M_max, cut=None, earlier=None,
         raise NoHalosInStackError("No halos in stack")
 
     if use_percentile is not None:
+        if weights is not None:
+            raise NotImplementedError("Weighted percentile not implemented")
         mean_profile = np.nanpercentile([p for p in profiles[mask]], use_percentile, axis=0)
         err_profile = 0.0
     elif 'rho' in property_name:
+        if weights is not None:
+            raise NotImplementedError("Weighted mean density not implemented")
         # zeros should be counted, otherwise biased mass estimator
         if use_log:
             mean_profile = np.exp(np.nansum([p for p in log_profiles], axis=0)/num_included)
@@ -92,13 +99,13 @@ def get_stack(property_name, M_min, M_max, cut=None, earlier=None,
         err_profile = mean_profile/np.sqrt(num_included)
     else:
         # nan bins should not be counted
-        mean_profile, err_profile = _get_mean_of_profiles(profiles, use_log, mask)
+        mean_profile, err_profile = _get_mean_of_profiles(profiles, weights, use_log, mask)
     
     xs = get_xs(ts, property_name, mean_profile)
     labels = get_labels(ts, property_name)
     return mean_profile, err_profile, xs, labels
 
-def _get_mean_of_profiles(profiles, use_log, mask):
+def _get_mean_of_profiles(profiles, weights, use_log, mask):
     log_profiles = []
     for p in profiles[mask]:
         if (p<0).sum() > (p>0).sum():
@@ -107,9 +114,16 @@ def _get_mean_of_profiles(profiles, use_log, mask):
         ln_p[ln_p==-np.inf] = np.nan
         log_profiles.append(ln_p)
     if use_log:
+        if weights is not None:
+            raise NotImplementedError("Weighted log-mean not implemented")
         mean_profile = np.exp(np.nanmean([p for p in log_profiles], axis=0))
     else:
-        mean_profile = np.nanmean([p for p in profiles[mask]], axis=0)
+        if weights is not None:
+            mean_profile = np.nanmean([p*w for p, w  in zip(profiles[mask], weights[mask])], axis=0)
+            mean_weights = np.nanmean([w for w in weights[mask]], axis=0)
+            mean_profile /= mean_weights
+        else:
+            mean_profile = np.nanmean([p for p in profiles[mask]], axis=0)
     num_included = mask.sum()
 
     err_log_profile = (np.nanstd([p for p in log_profiles], axis=0)/np.sqrt(num_included))
@@ -149,7 +163,6 @@ def make_entropy_radius_stack(M_min=12.5, M_max=13.0, box="L0200N0360_HYDRO_FIDU
     
     if restriction is not None:
         property_name += f"_{restriction}"
-    print(f"Stacking {property_name} for {box} at ts {tsnum} for 10^{M_min} < M200m/Msol < 10^{M_max}")
     profile, mass = db.get_timestep(f"{box}/%{tsnum}.hdf5").calculate_all(property_name, 'M200m()')
     mask = (mass > 10**M_min) & (mass < 10**M_max)
     if mask.sum() == 0:
@@ -176,6 +189,7 @@ def make_entropy_radius_histogram(stacked_profile, normed=True):
 
 def make_plot(name='rho', M_min=12.5, M_max=13.0, with_guide=False,
               relative=True, exclusive=False, with_exclusive=False,
+              weight_by = None,
               with_alternative_ts=None, particle='gas',
               get_stack_kwargs={}, 
               plot_kwargs={}, norm_guide=False):
@@ -189,10 +203,15 @@ def make_plot(name='rho', M_min=12.5, M_max=13.0, with_guide=False,
     # Determine base property name
     if relative:
         prop_name = f'{name}_r200m_relative'
+        if weight_by is not None:
+            weight_by += '_r200m_relative'
     else:
         prop_name = name
+
     if exclusive:
         prop_name += "_exclusive"
+        if weight_by is not None:
+            weight_by += '_exclusive'
 
     
     if particle == 'ratio':
@@ -201,8 +220,8 @@ def make_plot(name='rho', M_min=12.5, M_max=13.0, with_guide=False,
         dm_prop_name = f'dm_{prop_name}'
         
         try:
-            gas_profile, gas_uncertainty, xs, labels = get_stack(gas_prop_name, M_min, M_max, **get_stack_kwargs)
-            dm_profile, dm_uncertainty, _, _ = get_stack(dm_prop_name, M_min, M_max, **get_stack_kwargs)
+            gas_profile, gas_uncertainty, xs, labels = get_stack(gas_prop_name, M_min, M_max, **(get_stack_kwargs | {'weight_by': weight_by}))
+            dm_profile, dm_uncertainty, _, _ = get_stack(dm_prop_name, M_min, M_max, **(get_stack_kwargs | {'weight_by': weight_by}))
         except NoHalosInStackError:
             print(f"No halos in stack for {(M_min, M_max)}")
             return 
@@ -214,12 +233,13 @@ def make_plot(name='rho', M_min=12.5, M_max=13.0, with_guide=False,
         
     else:
         prop_name = f'{particle}_{prop_name}'
+        weight_by = None if weight_by is None else f'{particle}_{weight_by}'
 
         if is_function:
             prop_name += '()'
         
         try:
-            profile, uncertainty, xs, labels = get_stack(prop_name, M_min, M_max, **get_stack_kwargs)
+            profile, uncertainty, xs, labels = get_stack(prop_name, M_min, M_max, **(get_stack_kwargs | {'weight_by': weight_by}))
         except NoHalosInStackError:
             print(f"No halos in stack for {(M_min, M_max)}")
             return 
@@ -293,11 +313,14 @@ def make_plot(name='rho', M_min=12.5, M_max=13.0, with_guide=False,
                   )
 
 #ranges = [(11.8, 12.2), (12.6, 13.0), (13.0, 13.5), (13.5, 14.0), (14.0, 15.0)]
-ranges = [(12.5, 13.0), (13.0, 13.5), (13.5, 14.0), (14.0, 15.0)]
+#ranges = [(12.5, 13.0), (13.0, 13.5), (13.5, 14.0), (14.0, 15.0)]
 #ranges = [(12.0, 12.5), (13.0, 13.5), (14.0, 14.5)]
 #ranges = [(12.6, 12.8), (12.9, 13.1), (13.2, 13.4), (13.5, 13.7)]
+ranges = [(12.5, 13.5)]
+mass_name = "M200m()"
 vars = ['density', 'entropy', 'temp', 'p']
-plot_guides_for = ['density', 'entropy', 'temp', 'p']
+#plot_guides_for = ['density', 'entropy', 'temp', 'p']
+plot_guides_for = []
 
 def make_histogram(histogram_property, tsnum=8, box="L0200N0720_HYDRO_FIDUCIAL"):
     timestep_name = f"{box}/%{tsnum}.hdf5"
@@ -311,14 +334,17 @@ def make_histogram(histogram_property, tsnum=8, box="L0200N0720_HYDRO_FIDUCIAL")
     p.ylabel("Number of halos")
 
 def make_profile_plots(v, tsnum=8, box="L0200N0720_HYDRO_FIDUCIAL", 
-                       newfig=True, with_exclusive=False, norm_guide=False, 
+                       newfig=True, with_exclusive=False, norm_guide=False, weight_by=None,
                        particle='gas', plot_kwargs={}, get_stack_kwargs={}):
+    global ranges, mass_name 
     timestep_name = f"{box}/%{tsnum}.hdf5"
     z = db.get_timestep(timestep_name).redshift
     print(f"Plotting {v} profiles for {timestep_name}")
     if newfig:
         p.figure(figsize=(12, 5))
     p.subplot(121)
+
+    get_stack_kwargs['M_name'] = get_stack_kwargs.get('M_name', mass_name)
 
     redshift_label = f"$z={z:.1f}$"
     if 'earlier' in get_stack_kwargs:
@@ -334,9 +360,11 @@ def make_profile_plots(v, tsnum=8, box="L0200N0720_HYDRO_FIDUCIAL",
         make_plot(v, ra[0], ra[1], with_guide=with_guide, with_exclusive=with_exclusive, relative=True,
                   with_alternative_ts=False, 
                   get_stack_kwargs=get_stack_kwargs | {'timestep_name': timestep_name},
-                  norm_guide=norm_guide, particle=particle, plot_kwargs=plot_kwargs)
-    if newfig:
-        p.legend()
+                  norm_guide=norm_guide, particle=particle, plot_kwargs=plot_kwargs, weight_by=weight_by)
+        
+    remove_existing_legend()
+    p.legend()
+
     p.subplot(122)
     p.gca().set_prop_cycle(None)
     p.title(f"Absolute radius profiles ({redshift_label})")
@@ -344,10 +372,18 @@ def make_profile_plots(v, tsnum=8, box="L0200N0720_HYDRO_FIDUCIAL",
         with_guide = i == 3 and v in plot_guides_for
         make_plot(v, ra[0], ra[1], with_guide=with_guide, with_exclusive=with_exclusive, relative=False,
                   with_alternative_ts=False, get_stack_kwargs=get_stack_kwargs|{'timestep_name': timestep_name},
-                  norm_guide=norm_guide, particle=particle, plot_kwargs=plot_kwargs)
+                  norm_guide=norm_guide, particle=particle, plot_kwargs=plot_kwargs, weight_by=weight_by)
+    
+    p.gca().yaxis.tick_right()
+    p.gca().yaxis.set_label_position('right')
+    p.tight_layout()
+    remove_existing_legend()
+    p.legend()
 
-    if newfig:
-        p.legend()
+def remove_existing_legend():
+    legend = p.gca().get_legend()
+    if legend:
+        legend.remove()
 
 def make_profile_plots_with_cut(v, cut_variable, cut_value=None, **kwargs):
     if cut_value is not None:
@@ -360,7 +396,9 @@ def make_profile_plots_with_cut(v, cut_variable, cut_value=None, **kwargs):
     get_stack_kwargs = kwargs.get('get_stack_kwargs', {}) | {'cut': cut_upper}
     make_profile_plots(v, **kwargs | {'get_stack_kwargs': get_stack_kwargs})
     get_stack_kwargs = kwargs.get('get_stack_kwargs', {}) | {'cut': cut_lower}
-    make_profile_plots(v, **kwargs | {'get_stack_kwargs': get_stack_kwargs, 'plot_kwargs': {'linestyle': '--'}, 'newfig': False})
+    make_profile_plots(v, **kwargs | {'get_stack_kwargs': get_stack_kwargs, 
+                                      'plot_kwargs': kwargs.get('plot_kwargs', {}) | {'linestyle': '--', 'label': '_nolegend_'}, 
+                                      'newfig': False})
 
 def cosmic_density(redshift, particle):
     match particle:
