@@ -187,6 +187,35 @@ def make_entropy_radius_histogram(stacked_profile, normed=True):
     p.xlabel('log10(r)')
     p.ylabel('log10(entropy)')
 
+def make_binned_by_mass_plot(property_name, weight_property_name = None, bin_name='M200m()', num_bins=15, bin_range=(12.5, 14.5),
+                             ts_name=r"%FIDUCIAL/%8%", plot_kwargs={}):
+    ts = db.get_timestep(ts_name)
+    if weight_property_name is None:
+        mass, property = ts.calculate_all(bin_name, property_name)
+        weights = np.ones_like(property)
+    else:
+        mass, property, weights = ts.calculate_all(bin_name, property_name, weight_property_name)
+        property = property * weights
+    bin_edges = np.linspace(bin_range[0], bin_range[1], num_bins+1)
+    bin_centers = 0.5 * (bin_edges[1:] + bin_edges[:-1])
+    binned_means = []
+    binned_stds = []
+    for i in range(num_bins):
+        mask = (mass > 10**bin_edges[i]) & (mass <= 10**bin_edges[i+1])
+        if mask.sum() > 0:
+            binned_means.append(np.nanmean(property[mask])/np.nanmean(weights[mask]))
+            binned_stds.append(np.nanstd(property[mask])/abs(np.nanmean(weights[mask])))
+        else:
+            binned_means.append(np.nan)
+            binned_stds.append(np.nan)
+    binned_means = np.array(binned_means)
+    binned_stds = np.array(binned_stds)
+
+    p.errorbar(bin_centers, binned_means, yerr=binned_stds, fmt='o', **plot_kwargs)
+    p.xlabel(f'log10({bin_name})')
+    p.ylabel(property_name)
+    p.title(f'{property_name} binned by {bin_name}')
+
 def make_plot(name='rho', M_min=12.5, M_max=13.0, with_guide=False,
               relative=True, exclusive=False, with_exclusive=False,
               weight_by = None,
@@ -264,7 +293,7 @@ def make_plot(name='rho', M_min=12.5, M_max=13.0, with_guide=False,
                **(plot_kwargs | {'alpha': 0.2, 'label': '_nolegend_'}))
     else:
         main_line = p.plot(r, profile, **plot_kwargs)
-    p.fill_between(r, profile-uncertainty, profile+uncertainty, alpha=0.2)
+    p.fill_between(r, profile-uncertainty, profile+uncertainty, alpha=0.2, color=main_line[0].get_color(), label='_nolegend_')
 
     if name == 'vr':
         p.semilogx()
@@ -314,9 +343,9 @@ def make_plot(name='rho', M_min=12.5, M_max=13.0, with_guide=False,
 
 #ranges = [(11.8, 12.2), (12.6, 13.0), (13.0, 13.5), (13.5, 14.0), (14.0, 15.0)]
 #ranges = [(12.5, 13.0), (13.0, 13.5), (13.5, 14.0), (14.0, 15.0)]
-#ranges = [(12.0, 12.5), (13.0, 13.5), (14.0, 14.5)]
+ranges = [(13.4, 13.6)]
 #ranges = [(12.6, 12.8), (12.9, 13.1), (13.2, 13.4), (13.5, 13.7)]
-ranges = [(12.5, 13.5)]
+#ranges = [(12.5, 13.5)]
 mass_name = "M200m()"
 vars = ['density', 'entropy', 'temp', 'p']
 #plot_guides_for = ['density', 'entropy', 'temp', 'p']
@@ -335,8 +364,11 @@ def make_histogram(histogram_property, tsnum=8, box="L0200N0720_HYDRO_FIDUCIAL")
 
 def make_profile_plots(v, tsnum=8, box="L0200N0720_HYDRO_FIDUCIAL", 
                        newfig=True, with_exclusive=False, norm_guide=False, weight_by=None,
-                       particle='gas', plot_kwargs={}, get_stack_kwargs={}):
+                       particle='gas', plot_kwargs={}, get_stack_kwargs={}, ranges_override=None):
     global ranges, mass_name 
+    if ranges_override is None:
+        ranges_override = ranges
+    
     timestep_name = f"{box}/%{tsnum}.hdf5"
     z = db.get_timestep(timestep_name).redshift
     print(f"Plotting {v} profiles for {timestep_name}")
@@ -355,20 +387,20 @@ def make_profile_plots(v, tsnum=8, box="L0200N0720_HYDRO_FIDUCIAL",
 
     p.title(f"Relative radius profiles ({redshift_label})")
     p.gca().set_prop_cycle(None)
-    for i, ra in enumerate(ranges):
+    for i, ra in enumerate(ranges_override):
         with_guide = i == 3 and v in plot_guides_for
         make_plot(v, ra[0], ra[1], with_guide=with_guide, with_exclusive=with_exclusive, relative=True,
                   with_alternative_ts=False, 
                   get_stack_kwargs=get_stack_kwargs | {'timestep_name': timestep_name},
                   norm_guide=norm_guide, particle=particle, plot_kwargs=plot_kwargs, weight_by=weight_by)
         
-    remove_existing_legend()
-    p.legend()
+    if newfig:
+        p.legend()
 
     p.subplot(122)
     p.gca().set_prop_cycle(None)
     p.title(f"Absolute radius profiles ({redshift_label})")
-    for i, ra in enumerate(ranges):
+    for i, ra in enumerate(ranges_override):
         with_guide = i == 3 and v in plot_guides_for
         make_plot(v, ra[0], ra[1], with_guide=with_guide, with_exclusive=with_exclusive, relative=False,
                   with_alternative_ts=False, get_stack_kwargs=get_stack_kwargs|{'timestep_name': timestep_name},
@@ -377,8 +409,8 @@ def make_profile_plots(v, tsnum=8, box="L0200N0720_HYDRO_FIDUCIAL",
     p.gca().yaxis.tick_right()
     p.gca().yaxis.set_label_position('right')
     p.tight_layout()
-    remove_existing_legend()
-    p.legend()
+    if newfig:
+        p.legend()
 
 def remove_existing_legend():
     legend = p.gca().get_legend()
