@@ -204,7 +204,8 @@ def make_binned_by_mass_plot(property_name, weight_property_name = None, bin_nam
         mask = (mass > 10**bin_edges[i]) & (mass <= 10**bin_edges[i+1])
         if mask.sum() > 0:
             binned_means.append(np.nanmean(property[mask])/np.nanmean(weights[mask]))
-            binned_stds.append(np.nanstd(property[mask])/abs(np.nanmean(weights[mask])))
+            variance = np.nanmean(property[mask]**2/weights[mask])/np.nanmean(weights[mask]) - (binned_means[-1])**2
+            binned_stds.append(np.sqrt(variance))
         else:
             binned_means.append(np.nan)
             binned_stds.append(np.nan)
