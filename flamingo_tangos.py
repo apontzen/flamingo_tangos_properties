@@ -301,7 +301,8 @@ class FlamingoDensityProfileBase(spherical_region.SphericalRegionPropertyCalcula
             "_gas_mdot", "_gas_mdot_inflow", "_gas_mdot_outflow", \
             "_dm_mdot", "_dm_mdot_inflow", "_dm_mdot_outflow", "_gas_entropy_outflow", "_gas_entropy_inflow", \
             "_gas_temp_outflow", "_gas_temp_inflow", "_gas_density_outflow", "_gas_density_inflow", \
-            "_gas_vr_inflow", "_gas_vr_outflow", "_gas_cs"
+            "_gas_vr_inflow", "_gas_vr_outflow", "_gas_cs", \
+            "_gas_energy_inflow", "_gas_energy_outflow", "_dm_energy_inflow", "_dm_energy_outflow"
 
 
     _nbins = 50
@@ -337,6 +338,13 @@ class FlamingoDensityProfileBase(spherical_region.SphericalRegionPropertyCalcula
             data.gas['p']
             data.gas['cs'].convert_units('km s^-1')
 
+            mu = 0.59 # mean molecular weight, fully ionized, primordial
+            data.gas['energy_flow_integrand'] = (data.gas['vr'] * ( 
+                (data.gas['vel']**2).sum(axis=1)/2 + 1.5 * data.gas['temp'] * pynbody.units.k / (mu*pynbody.units.m_p) 
+                )).in_units("erg kpc Myr^-1 Msol^-1")
+
+            data.dm['energy_flow_integrand'] = (data.dm['vr'] * (data.dm['vel']**2).sum(axis=1)/2).in_units("erg kpc Myr^-1 Msol^-1")
+
             den = pro_vol_weighted['density']
             p = pro_vol_weighted['p']
             entropy = pro_vol_weighted['Entropies']
@@ -358,10 +366,10 @@ class FlamingoDensityProfileBase(spherical_region.SphericalRegionPropertyCalcula
             den_in = pro_inflow_vr_weighted['density']
             vr_in = pro_inflow_vr_weighted['vr']
 
-            vr, vr_disp, mass_enc, mdot, mdot_inflow, mdot_outflow, mass_enc_2d = self._get_profiles(data.gas, minrad, maxrad)
+            vr, vr_disp, mass_enc, mdot, mdot_inflow, mdot_outflow, mass_enc_2d, energy_outflow, energy_inflow = self._get_profiles(data.gas, minrad, maxrad)
 
 
-            vr_dm, vr_disp_dm, mass_enc_dm, mdot_dm, mdot_inflow_dm, mdot_outflow_dm, mass_enc_2d_dm = self._get_profiles(data.dm, minrad, maxrad)
+            vr_dm, vr_disp_dm, mass_enc_dm, mdot_dm, mdot_inflow_dm, mdot_outflow_dm, mass_enc_2d_dm, energy_outflow_dm, energy_inflow_dm = self._get_profiles(data.dm, minrad, maxrad)
 
 
         finally:
@@ -369,7 +377,7 @@ class FlamingoDensityProfileBase(spherical_region.SphericalRegionPropertyCalcula
 
         return den, p, entropy, temp, rho, vr, vr_disp, mass_enc, mass_enc_2d, mass_enc_dm, mass_enc_2d_dm, vr_dm, vr_disp_dm, \
                 mdot, mdot_inflow, mdot_outflow, mdot_dm, mdot_inflow_dm, mdot_outflow_dm, entropy_out, entropy_in, temp_out, \
-                temp_in, den_out, den_in, vr_in, vr_out, cs
+                temp_in, den_out, den_in, vr_in, vr_out, cs, energy_inflow, energy_outflow, energy_inflow_dm, energy_outflow_dm
 
 
     def _make_vol_weighted_profile(self, data, minrad, maxrad):
@@ -394,17 +402,20 @@ class FlamingoDensityProfileBase(spherical_region.SphericalRegionPropertyCalcula
         pro_inflow = pynbody.analysis.profile.Profile(data[filt_inflow], type='log', ndim=3,
                                                           min=minrad, max=maxrad, nbins=self._nbins)
         mdot_inflow = pro_inflow['mdot']
+
+        energy_inflow = abs(pro_inflow['energy_flux'])
             
         filt_outflow = pynbody.filt.HighPass('vr', 0)
         pro_outflow = pynbody.analysis.profile.Profile(data[filt_outflow], type='log', ndim=3,
                                                            min=minrad, max=maxrad, nbins=self._nbins)
         mdot_outflow = pro_outflow['mdot']
+        energy_outflow = abs(pro_outflow['energy_flux'])
 
         pro_2d = pynbody.analysis.profile.Profile(data, type='log', ndim=2,
                                                 min=minrad, max=maxrad, nbins=self._nbins)
         mass_enc_2d = pro_2d['mass_enc']
 
-        return vr,vr_disp,mass_enc,mdot,mdot_inflow,mdot_outflow,mass_enc_2d
+        return vr,vr_disp,mass_enc,mdot,mdot_inflow,mdot_outflow,mass_enc_2d, energy_outflow, energy_inflow
 
     def _get_min_max_radius(self, existing_properties):
         raise NotImplementedError("Subclasses must implement _get_min_max_radius method")
@@ -427,7 +438,9 @@ class FlamingoDensityProfileBase(spherical_region.SphericalRegionPropertyCalcula
                 r"$\dot{M}_{dm}/M_{\odot} yr^{-1}$", r"$\dot{M}_{dm,inflow}/M_{\odot} yr^{-1}$", r"$\dot{M}_{dm,outflow}/M_{\odot} yr^{-1}$", \
                 r"entropy/$_{\rm outflow}M_{\odot}^{-2/3} kpc^2 km^2 s^{-2}$", r"entropy/$_{\rm inflow}M_{\odot}^{-2/3} kpc^2 km^2 s^{-2}$", \
                 r"T$_{\rm outflow}/K$", r"T$_{\rm inflow}/K$", r"$\rho_{\rm outflow}/M_{\odot} kpc^{-3}$", r"$\rho_{\rm inflow}/M_{\odot} kpc^{-3}$", \
-                r"v$_{\rm inflow}/km s^{-1}$", r"v$_{\rm outflow}/km s^{-1}$", r"c$_s/km s^{-1}$"
+                r"v$_{\rm inflow}/km s^{-1}$", r"v$_{\rm outflow}/km s^{-1}$", r"c$_s/km s^{-1}$", \
+                r"energy flow/$_{\rm inflow}/erg Myr^{-1}$", r"energy flow/$_{\rm outflow}/erg Myr^{-1}$", \
+                r"DM energy flow/$_{\rm inflow}/erg Myr^{-1}$", r"DM energy flow/$_{\rm outflow}/erg Myr^{-1}$"
 
     def plot_xlog(self):
         return False
@@ -617,6 +630,20 @@ def mdot(profile: pynbody.analysis.profile.Profile):
     ar = profile['vr'] * profile['mass'] / np.diff(profile['bin_edges'])
     ar.units = profile['mass'].units * profile['vr'].units / profile['bin_edges'].units
     return ar.in_units('Msol yr^-1')
+
+@pynbody.analysis.profile.Profile.profile_property
+def energy_flux(profile: pynbody.analysis.profile.Profile):
+    # energy flux = integral rho v_r (v^2/2 + 3/2 kT/(mu m_p)) r^2 d omega
+    # estimate in a spherical shell of thickness delta r:
+    # energy flux = integral_r0^(r0+delta r) dr r^2 d omega (rho v_r (v^2/2 + 3/2 kT/(mu m_p))) / delta r
+    #             = integral dV (rho v_r (v^2/2 + 3/2 kT/(mu m_p))) / delta r
+    #             = sum m v_r (v^2/2 + 3/2 kT/(mu m_p)) / delta r
+    #
+    # profile['energy_flow_integrand'] gives mass-weighted mean of v_r (v^2/2 + 3/2 kT/(mu m_p)), while profile['mass'] gives the mass in each shell,
+    # so the product is sum m v_r (v^2/2 + 3/2 kT/(mu m_p)) in each shell.
+    ar = profile['energy_flow_integrand'] * profile['mass'] / np.diff(profile['bin_edges'])
+    ar.units = profile['mass'].units * profile['energy_flow_integrand'].units / profile['bin_edges'].units
+    return ar.in_units('erg Myr^-1')
 
 @pynbody.derived_array
 def vr_smoothed(f: pynbody.snapshot.SimSnap):
