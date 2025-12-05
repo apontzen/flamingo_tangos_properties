@@ -188,7 +188,8 @@ def make_entropy_radius_histogram(stacked_profile, normed=True):
     p.ylabel('log10(entropy)')
 
 def make_binned_by_mass_plot(property_name, weight_property_name = None, bin_name='M200m()', num_bins=15, bin_range=(12.5, 14.5),
-                             ts_name=r"%FIDUCIAL/%8%", plot_kwargs={}):
+                             ts_name=r"%FIDUCIAL/%8%", plot_kwargs={},
+                             error_range: str | tuple ='std'):
     ts = db.get_timestep(ts_name)
     if weight_property_name is None:
         mass, property = ts.calculate_all(bin_name, property_name)
@@ -199,20 +200,36 @@ def make_binned_by_mass_plot(property_name, weight_property_name = None, bin_nam
     bin_edges = np.linspace(bin_range[0], bin_range[1], num_bins+1)
     bin_centers = 0.5 * (bin_edges[1:] + bin_edges[:-1])
     binned_means = []
-    binned_stds = []
+    binned_range_positive = []
+    binned_range_negative = []
+    property[~np.isfinite(property)] = np.nan
     for i in range(num_bins):
         mask = (mass > 10**bin_edges[i]) & (mass <= 10**bin_edges[i+1])
         if mask.sum() > 0:
             binned_means.append(np.nanmean(property[mask])/np.nanmean(weights[mask]))
-            variance = np.nanmean(property[mask]**2/weights[mask])/np.nanmean(weights[mask]) - (binned_means[-1])**2
-            binned_stds.append(np.sqrt(variance))
+            match error_range:
+                case 'std':
+                    variance = np.nanmean(property[mask]**2/weights[mask])/np.nanmean(weights[mask]) - (binned_means[-1])**2
+                    binned_range_positive.append(np.sqrt(variance))
+                    binned_range_negative.append(np.sqrt(variance))
+                case (lower_percentile, upper_percentile):
+                    lower = np.nanpercentile(property[mask]/weights[mask], lower_percentile)
+                    upper = np.nanpercentile(property[mask]/weights[mask], upper_percentile)
+                    lower = max(binned_means[-1] - lower, 0)
+                    upper = max(upper - binned_means[-1], 0)
+                    binned_range_negative.append(lower)
+                    binned_range_positive.append(upper)
+                case _:
+                    raise ValueError("error_range must be 'std' or a tuple of (lower_percentile, upper_percentile)")
         else:
             binned_means.append(np.nan)
-            binned_stds.append(np.nan)
+            binned_range_positive.append(np.nan)
+            binned_range_negative.append(np.nan)
     binned_means = np.array(binned_means)
-    binned_stds = np.array(binned_stds)
+    binned_range_positive = np.array(binned_range_positive)
+    binned_range_negative = np.array(binned_range_negative)
 
-    p.errorbar(bin_centers, binned_means, yerr=binned_stds, fmt='o', **plot_kwargs)
+    p.errorbar(bin_centers, binned_means, yerr=[binned_range_negative, binned_range_positive], fmt='o', **plot_kwargs)
     p.xlabel(f'log10({bin_name})')
     p.ylabel(property_name)
     p.title(f'{property_name} binned by {bin_name}')
