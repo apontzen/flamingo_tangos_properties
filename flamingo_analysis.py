@@ -189,7 +189,8 @@ def make_entropy_radius_histogram(stacked_profile, normed=True):
 
 def make_binned_by_mass_plot(property_name, weight_property_name = None, bin_name='M200m()', num_bins=15, bin_range=(12.5, 14.5),
                              ts_name=r"%FIDUCIAL/%8%", plot_kwargs={},
-                             error_range: str | tuple ='std'):
+                             error_range: str | tuple ='std',
+                             x_offset=0.0):
     ts = db.get_timestep(ts_name)
     if weight_property_name is None:
         mass, property = ts.calculate_all(bin_name, property_name)
@@ -229,7 +230,7 @@ def make_binned_by_mass_plot(property_name, weight_property_name = None, bin_nam
     binned_range_positive = np.array(binned_range_positive)
     binned_range_negative = np.array(binned_range_negative)
 
-    p.errorbar(bin_centers, binned_means, yerr=[binned_range_negative, binned_range_positive], fmt='o', **plot_kwargs)
+    p.errorbar(bin_centers+x_offset, binned_means, yerr=[binned_range_negative, binned_range_positive], fmt='o', **plot_kwargs)
     p.xlabel(f'log10({bin_name})')
     p.ylabel(property_name)
     p.title(f'{property_name} binned by {bin_name}')

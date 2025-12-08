@@ -21,6 +21,15 @@ def velocity(M200m, h=0.68, z=0, OmegaM0=0.307):
 
     return vel.in_units("km s^-1")
 
+def temperature(M200m, h=0.68, z=0, OmegaM0=0.307, mu=0.59):
+    kB = pynbody.units.Unit("k")
+    mP = pynbody.units.Unit("m_p")
+    vel = velocity(M200m, h=h, z=z, OmegaM0=OmegaM0) * pynbody.units.Unit("km s^-1")
+
+    temp = mu * mP / (2 * kB) * vel**2
+
+    return temp.in_units("K")
+
 def virial_specific_energy(M200m, h=0.68, z=0, OmegaM0=0.307):
     vel = velocity(M200m, h=h, z=z, OmegaM0=OmegaM0)
     spec_energy = 0.5 * vel**2
