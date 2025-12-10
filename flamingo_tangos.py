@@ -536,7 +536,25 @@ class FlamingoDensityProfileAbsolute(FlamingoDensityProfileBase):
     def plot_xdelta(self):
         return np.log10(self._max_rad/self._min_rad)/self._nbins
     
+class EnthalpyProfileRelative(LiveHaloProperties, FlamingoDensityProfileRelative):
+    names = "gas_enthalpy_inflow_r200m_relative", "gas_enthalpy_outflow_r200m_relative"
 
+    def requires_property(self):
+        return ['gas_energy_inflow_r200m_relative', 'gas_mdot_inflow_r200m_relative', 'gas_temp_inflow_r200m_relative',
+                'gas_energy_outflow_r200m_relative', 'gas_mdot_outflow_r200m_relative', 'gas_temp_outflow_r200m_relative'] + super().requires_property()
+    
+    def calculate(self, data, existing_properties):
+        # factor is k / (mu * m_p) where mu = 0.59
+        factor = (pynbody.units.k / (0.59 * pynbody.units.m_p)).in_units("erg Msol^-1 K^-1") * 1e6 # per yr -> per Myr
+        enthalpy_inflow = existing_properties['gas_energy_inflow_r200m_relative'] + \
+             factor * existing_properties['gas_temp_inflow_r200m_relative'] * existing_properties['gas_mdot_inflow_r200m_relative']
+        enthalpy_outflow = existing_properties['gas_energy_outflow_r200m_relative'] + \
+             factor * existing_properties['gas_temp_outflow_r200m_relative'] * existing_properties['gas_mdot_outflow_r200m_relative']
+        return enthalpy_inflow, enthalpy_outflow
+    
+    def plot_ylabel(self):
+        return r"Enthalpy flow/$_{\rm inflow}/erg Myr^{-1}$", r"Enthalpy flow/$_{\rm outflow}/erg Myr^{-1}$"
+    
 class RelativeInflowEquivalentRate(LiveHaloProperties, FlamingoDensityProfileRelative):
     names = "gas_inflow_equivalent_rate_r200m_relative",
     def calculate(self, data, existing_properties):
