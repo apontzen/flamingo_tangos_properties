@@ -191,8 +191,9 @@ def make_entropy_radius_histogram(stacked_profile, normed=True):
 def make_binned_by_mass_plot(property_name, weight_property_name = None, bin_name='M200m()', num_bins=15, bin_range=(12.5, 14.5),
                              ts_name=r"%FIDUCIAL/%8%", plot_kwargs={},
                              error_range: str | tuple ='std',
+                             mask_property_name = None, mask_property_value = None,
                              x_offset=0.0):
-    bin_centers, binned_means, binned_range_positive, binned_range_negative = _get_binned_statistics(property_name, weight_property_name, bin_name, num_bins, bin_range, ts_name, error_range)
+    bin_centers, binned_means, binned_range_positive, binned_range_negative = _get_binned_statistics(property_name, weight_property_name, mask_property_name, mask_property_value, bin_name, num_bins, bin_range, ts_name, error_range)
 
     p.errorbar(bin_centers+x_offset, binned_means, yerr=[binned_range_negative, binned_range_positive], fmt='o', **plot_kwargs)
     p.xlabel(f'log10({bin_name})')
@@ -200,8 +201,9 @@ def make_binned_by_mass_plot(property_name, weight_property_name = None, bin_nam
     p.title(f'{property_name} binned by {bin_name}')
 
 def tabulate_by_mass(property_name, weight_property_name = None, bin_name='M200m()', num_bins=15, bin_range=(12.5, 14.5),
-                                ts_name=r"%360%FIDUCIAL/%8%", error_range: str | tuple ='std'):
-    bin_centers, binned_means, binned_range_positive, binned_range_negative = _get_binned_statistics(property_name, weight_property_name, bin_name, num_bins, bin_range, ts_name, error_range)
+                     mask_property_name = None, mask_property_value = None,
+                     ts_name=r"%360%FIDUCIAL/%8%", error_range: str | tuple ='std'):
+    bin_centers, binned_means, binned_range_positive, binned_range_negative = _get_binned_statistics(property_name, weight_property_name, mask_property_name, mask_property_value, bin_name, num_bins, bin_range, ts_name, error_range)
     df = pd.DataFrame({
         'bin_centre': bin_centers,
         'mean': binned_means,
@@ -211,32 +213,77 @@ def tabulate_by_mass(property_name, weight_property_name = None, bin_name='M200m
     pd.options.display.float_format = '{:.3g}'.format
     return df
 
-def _get_binned_statistics(property_name, weight_property_name, bin_name, num_bins, bin_range, ts_name, error_range):
+def _calculate_all_or_return_none(timestep, *args):
+    args_filtered = [a for a in args if a is not None ]
+    results_filtered = timestep.calculate_all(*args_filtered)
+    results = []
+    j = 0
+    for a in args:
+        if a is None:
+            results.append(None)
+        else:
+            results.append(results_filtered[j])
+            j += 1
+    return tuple(results)
+
+def _get_binned_statistics(property_name, weight_property_name, mask_property_name, mask_property_value, bin_name, num_bins, bin_range, ts_name, error_range):
+
     ts = db.get_timestep(ts_name)
+    mass, property, weights, maskvals = _calculate_all_or_return_none(ts, bin_name, property_name, weight_property_name, mask_property_name)
     if weight_property_name is None:
-        mass, property = ts.calculate_all(bin_name, property_name)
         weights = np.ones_like(property)
-    else:
-        mass, property, weights = ts.calculate_all(bin_name, property_name, weight_property_name)
-        property = property * weights
+
+    
     bin_edges = np.linspace(bin_range[0], bin_range[1], num_bins+1)
     bin_centers = 0.5 * (bin_edges[1:] + bin_edges[:-1])
+
+    if mask_property_name is None:
+        mask = np.ones(len(property), dtype=np.bool_)
+    else:
+        # mask_property_value is a string of the following format:
+        #  '>val', '<val' -> mask is obtained by thresholding at the value
+        #  '>p%', '<p%' -> mask is obtained by thresholding at the given percentile per bin
+
+        if mask_property_value.endswith('%'):
+            # Percentile-based masking
+            percentile = float(mask_property_value[1:-1])
+            is_greater = mask_property_value[0] == '>'
+            mask = np.zeros(len(maskvals), dtype=np.bool_)
+            # Apply percentile threshold per bin
+            for i in range(num_bins):
+                bin_mask = (mass > 10**bin_edges[i]) & (mass <= 10**bin_edges[i+1])
+                if bin_mask.sum() > 0:
+                    threshold = np.nanpercentile(maskvals[bin_mask], percentile)
+                    if is_greater:
+                       mask[bin_mask] = maskvals[bin_mask] > threshold
+                    else:
+                        mask[bin_mask] = maskvals[bin_mask] < threshold
+        else:
+            # Value-based masking
+            threshold = float(mask_property_value[1:])
+            if mask_property_value[0] == '>':
+                mask = maskvals > threshold
+            else:
+                mask = maskvals < threshold
+
+        
+    property = property * weights
     binned_means = []
     binned_range_positive = []
     binned_range_negative = []
     property[~np.isfinite(property)] = np.nan
     for i in range(num_bins):
-        mask = (mass > 10**bin_edges[i]) & (mass <= 10**bin_edges[i+1])
-        if mask.sum() > 0:
-            binned_means.append(np.nanmean(property[mask])/np.nanmean(weights[mask]))
+        bin_mask = mask & (mass > 10**bin_edges[i]) & (mass <= 10**bin_edges[i+1])
+        if bin_mask.sum() > 0:
+            binned_means.append(np.nanmean(property[bin_mask])/np.nanmean(weights[bin_mask]))
             match error_range:
                 case 'std':
-                    variance = np.nanmean(property[mask]**2/weights[mask])/np.nanmean(weights[mask]) - (binned_means[-1])**2
+                    variance = np.nanmean(property[bin_mask]**2/weights[bin_mask])/np.nanmean(weights[bin_mask]) - (binned_means[-1])**2
                     binned_range_positive.append(np.sqrt(variance))
                     binned_range_negative.append(np.sqrt(variance))
                 case (lower_percentile, upper_percentile):
-                    lower = np.nanpercentile(property[mask]/weights[mask], lower_percentile)
-                    upper = np.nanpercentile(property[mask]/weights[mask], upper_percentile)
+                    lower = np.nanpercentile(property[bin_mask]/weights[bin_mask], lower_percentile)
+                    upper = np.nanpercentile(property[bin_mask]/weights[bin_mask], upper_percentile)
                     lower = max(binned_means[-1] - lower, 0)
                     upper = max(upper - binned_means[-1], 0)
                     binned_range_negative.append(lower)
