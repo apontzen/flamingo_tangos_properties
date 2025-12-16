@@ -270,15 +270,10 @@ class SSFR(LiveHaloProperties):
     names = "sSFR", 
 
     def calculate(self, data, existing_properties):
-        sfr = existing_properties['central_SFR']  # in Msol/yr
-        mstar = existing_properties['central_Mstar']     # in Msol
-        if mstar > 0:
-            return sfr / mstar,   # in yr^-1
-        else:
-            return 0.0, 
+        return 0.0102*existing_properties['InclusiveSphere_30kpc_StarFormationRate']/(1e10*existing_properties['InclusiveSphere_30kpc_StellarMass']), 
 
     def requires_property(self):
-        return ['central_SFR', 'central_Mstar'] + super().requires_property()
+        return ['InclusiveSphere_30kpc_StarFormationRate', 'InclusiveSphere_30kpc_StellarMass'] + super().requires_property()
 
 
 class RadialVelocityProfile(spherical_region.SphericalRegionPropertyCalculation):

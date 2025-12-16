@@ -45,23 +45,25 @@ def get_stack(property_name, M_min, M_max, M_name='M200m()', cut=None, earlier=N
         M_and_cutvar = M_name, cut_variable
     else:
         M_and_cutvar = M_name,
-
+    
+    if 'r200' in property_name:
+        property_name_with_rel = f'({property_name}, 3.0)'
+    else:
+        property_name_with_rel = f'({property_name}, log10(r200m))'
+    
     if earlier is not None:
         if earlier>0:
-            property_name_with_rel = f"earlier({earlier}).{property_name}"
+            property_name_with_rel = f"earlier({earlier}).{property_name_with_rel}"
         elif earlier<0:
-            property_name_with_rel = f"later({-earlier}).{property_name}"
-        else:
-            property_name_with_rel = property_name
-    else:
-        property_name_with_rel = property_name
+            property_name_with_rel = f"later({-earlier}).{property_name_with_rel}"
 
+    print(f"Calculating stack for {property_name_with_rel} with M200m in [10^{M_min}, 10^{M_max}]")
     if weight_by:
-        profiles, weights, *M_and_cutvar = ts.calculate_all(property_name_with_rel, weight_by, *M_and_cutvar)
+        profiles, r200, weights, *M_and_cutvar = ts.calculate_all(property_name_with_rel, weight_by,  *M_and_cutvar)
         
     else:
         weights = None
-        profiles, *M_and_cutvar = ts.calculate_all(property_name_with_rel, *M_and_cutvar)
+        profiles, r200, *M_and_cutvar = ts.calculate_all(property_name_with_rel, *M_and_cutvar)
         
 
     if cut is not None:
@@ -104,7 +106,7 @@ def get_stack(property_name, M_min, M_max, M_name='M200m()', cut=None, earlier=N
     
     xs = get_xs(ts, property_name, mean_profile)
     labels = get_labels(ts, property_name)
-    return mean_profile, err_profile, xs, labels
+    return mean_profile, err_profile, xs, labels, r200[mask].mean()
 
 def _get_mean_of_profiles(profiles, weights, use_log, mask):
     log_profiles = []
@@ -133,8 +135,8 @@ def _get_mean_of_profiles(profiles, weights, use_log, mask):
 
 def make_flow_ratio_plot(prop_name = 'gas_mdot_inflow', M_min=12.5, M_max=13.0, box1="L0200N0360_HYDRO_STRONGEST_AGN", box2="L0200N0360_HYDRO_WEAK_AGN", tsnum=1):
     try:
-        profile1, uncertainty1, xs, labels = get_stack(prop_name, M_min, M_max, timestep_name=f"{box1}/%{tsnum}.hdf5")
-        profile2, uncertainty2, _, _ = get_stack(prop_name, M_min, M_max, timestep_name=f"{box2}/%{tsnum}.hdf5")
+        profile1, uncertainty1, xs, labels, _ = get_stack(prop_name, M_min, M_max, timestep_name=f"{box1}/%{tsnum}.hdf5")
+        profile2, uncertainty2, _, _, _ = get_stack(prop_name, M_min, M_max, timestep_name=f"{box2}/%{tsnum}.hdf5")
     except NoHalosInStackError:
         print(f"No halos in stack for {(M_min, M_max)}")
         return 
@@ -304,7 +306,8 @@ def make_plot(name='rho', M_min=12.5, M_max=13.0, with_guide=False,
               weight_by = None,
               with_alternative_ts=None, particle='gas',
               get_stack_kwargs={}, 
-              plot_kwargs={}, norm_guide=False):
+              plot_kwargs={}, norm_guide=False,
+              mark_r200=False):
     
     if name.endswith("()"):
         is_function = True
@@ -330,10 +333,10 @@ def make_plot(name='rho', M_min=12.5, M_max=13.0, with_guide=False,
         # Create gas and dm property names
         gas_prop_name = f'gas_{prop_name}'
         dm_prop_name = f'dm_{prop_name}'
-        
+
         try:
-            gas_profile, gas_uncertainty, xs, labels = get_stack(gas_prop_name, M_min, M_max, **(get_stack_kwargs | {'weight_by': weight_by}))
-            dm_profile, dm_uncertainty, _, _ = get_stack(dm_prop_name, M_min, M_max, **(get_stack_kwargs | {'weight_by': weight_by}))
+            gas_profile, gas_uncertainty, xs, labels, log10_r200 = get_stack(gas_prop_name, M_min, M_max, **(get_stack_kwargs | {'weight_by': weight_by}))
+            dm_profile, dm_uncertainty, _, _, log10_r200 = get_stack(dm_prop_name, M_min, M_max, **(get_stack_kwargs | {'weight_by': weight_by}))
         except NoHalosInStackError:
             print(f"No halos in stack for {(M_min, M_max)}")
             return 
@@ -351,7 +354,7 @@ def make_plot(name='rho', M_min=12.5, M_max=13.0, with_guide=False,
             prop_name += '()'
         
         try:
-            profile, uncertainty, xs, labels = get_stack(prop_name, M_min, M_max, **(get_stack_kwargs | {'weight_by': weight_by}))
+            profile, uncertainty, xs, labels, log10_r200 = get_stack(prop_name, M_min, M_max, **(get_stack_kwargs | {'weight_by': weight_by}))
         except NoHalosInStackError:
             print(f"No halos in stack for {(M_min, M_max)}")
             return 
@@ -376,6 +379,13 @@ def make_plot(name='rho', M_min=12.5, M_max=13.0, with_guide=False,
                **(plot_kwargs | {'alpha': 0.2, 'label': '_nolegend_'}))
     else:
         main_line = p.plot(r, profile, **plot_kwargs)
+
+    if mark_r200:
+        # place a dot at (r200, profile at r=r200)
+        from scipy.interpolate import interp1d
+        interp_func = interp1d(r, profile, bounds_error=True)
+        p.plot(10.**(log10_r200-3.0), interp_func(10.**(log10_r200-3.0)), 'o', color=main_line[0].get_color())
+
     p.fill_between(r, profile-uncertainty, profile+uncertainty, alpha=0.2, color=main_line[0].get_color(), label='_nolegend_')
 
     if name == 'vr':
@@ -447,7 +457,9 @@ def make_histogram(histogram_property, tsnum=8, box="L0200N0720_HYDRO_FIDUCIAL")
 
 def make_profile_plots(v, tsnum=8, box="L0200N0720_HYDRO_FIDUCIAL", 
                        newfig=True, with_exclusive=False, norm_guide=False, weight_by=None,
-                       particle='gas', plot_kwargs={}, get_stack_kwargs={}, ranges_override=None):
+                       particle='gas', plot_kwargs={}, get_stack_kwargs={}, ranges_override=None,
+                       panels=('relative','absolute'), with_legend=True,
+                       mark_r200=False):
     global ranges, mass_name 
     if ranges_override is None:
         ranges_override = ranges
@@ -455,9 +467,12 @@ def make_profile_plots(v, tsnum=8, box="L0200N0720_HYDRO_FIDUCIAL",
     timestep_name = f"{box}/%{tsnum}.hdf5"
     z = db.get_timestep(timestep_name).redshift
     print(f"Plotting {v} profiles for {timestep_name}")
+    n_panels = len(panels)
     if newfig:
-        p.figure(figsize=(12, 5))
-    p.subplot(121)
+        p.figure(figsize=(n_panels*6, 5))
+    
+    panel_i = 1
+    
 
     get_stack_kwargs['M_name'] = get_stack_kwargs.get('M_name', mass_name)
 
@@ -468,32 +483,40 @@ def make_profile_plots(v, tsnum=8, box="L0200N0720_HYDRO_FIDUCIAL",
         z_earlier = db.get_timestep(f"{box}/%{tsnum_earlier}.hdf5").redshift
         redshift_label = f"sel@{redshift_label}, plot@${z_earlier:.1f}$"
 
-    p.title(f"Relative radius profiles ({redshift_label})")
-    p.gca().set_prop_cycle(None)
-    for i, ra in enumerate(ranges_override):
-        with_guide = i == 3 and v in plot_guides_for
-        make_plot(v, ra[0], ra[1], with_guide=with_guide, with_exclusive=with_exclusive, relative=True,
-                  with_alternative_ts=False, 
-                  get_stack_kwargs=get_stack_kwargs | {'timestep_name': timestep_name},
-                  norm_guide=norm_guide, particle=particle, plot_kwargs=plot_kwargs, weight_by=weight_by)
+    if 'relative' in panels:
+        p.subplot(1, n_panels, panel_i)
+        p.title(f"Relative radius profiles ({redshift_label})")
+        p.gca().set_prop_cycle(None)
+        for i, ra in enumerate(ranges_override):
+            with_guide = i == 3 and v in plot_guides_for
+            make_plot(v, ra[0], ra[1], with_guide=with_guide, with_exclusive=with_exclusive, relative=True,
+                      with_alternative_ts=False, 
+                      get_stack_kwargs=get_stack_kwargs | {'timestep_name': timestep_name},
+                      norm_guide=norm_guide, particle=particle, plot_kwargs=plot_kwargs, weight_by=weight_by,
+                      mark_r200=mark_r200)
         
-    if newfig:
-        p.legend()
-
-    p.subplot(122)
-    p.gca().set_prop_cycle(None)
-    p.title(f"Absolute radius profiles ({redshift_label})")
-    for i, ra in enumerate(ranges_override):
-        with_guide = i == 3 and v in plot_guides_for
-        make_plot(v, ra[0], ra[1], with_guide=with_guide, with_exclusive=with_exclusive, relative=False,
-                  with_alternative_ts=False, get_stack_kwargs=get_stack_kwargs|{'timestep_name': timestep_name},
-                  norm_guide=norm_guide, particle=particle, plot_kwargs=plot_kwargs, weight_by=weight_by)
+        if newfig and with_legend:
+            p.legend()
+        panel_i += 1
     
-    p.gca().yaxis.tick_right()
-    p.gca().yaxis.set_label_position('right')
-    p.tight_layout()
-    if newfig:
-        p.legend()
+
+    if 'absolute' in panels:
+        p.subplot(1, n_panels, panel_i)
+        p.gca().set_prop_cycle(None)
+        p.title(f"Absolute radius profiles ({redshift_label})")
+        for i, ra in enumerate(ranges_override):
+            with_guide = i == 3 and v in plot_guides_for
+            make_plot(v, ra[0], ra[1], with_guide=with_guide, with_exclusive=with_exclusive, relative=False,
+                    with_alternative_ts=False, get_stack_kwargs=get_stack_kwargs|{'timestep_name': timestep_name},
+                    norm_guide=norm_guide, particle=particle, plot_kwargs=plot_kwargs, weight_by=weight_by,
+                    mark_r200=mark_r200)
+        
+        if n_panels == 2:
+            p.gca().yaxis.tick_right()
+            p.gca().yaxis.set_label_position('right')
+        p.tight_layout()
+        if newfig and with_legend:
+            p.legend()
 
 def remove_existing_legend():
     legend = p.gca().get_legend()
