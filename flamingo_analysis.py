@@ -57,7 +57,6 @@ def get_stack(property_name, M_min, M_max, M_name='M200m()', cut=None, earlier=N
         elif earlier<0:
             property_name_with_rel = f"later({-earlier}).{property_name_with_rel}"
 
-    print(f"Calculating stack for {property_name_with_rel} with M200m in [10^{M_min}, 10^{M_max}]")
     if weight_by:
         profiles, r200, weights, *M_and_cutvar = ts.calculate_all(property_name_with_rel, weight_by,  *M_and_cutvar)
         
@@ -149,7 +148,7 @@ def make_flow_ratio_plot(prop_name = 'gas_mdot_inflow', M_min=12.5, M_max=13.0, 
         ratio_profile = profile1 - profile2
     ratio_uncertainty = ratio_profile * np.sqrt((uncertainty1/profile1)**2 + (uncertainty2/profile2)**2)
     
-    p.plot(r, ratio_profile, label=f"$10^{{{M_min}}} < M_{{200m}} / M_{{\\odot}} < 10^{{{M_max}}}$")
+    p.plot(r, ratio_profile, label=f"$10^{{{M_min}}} -- 10^{{{M_max}}}$")
     p.fill_between(r, ratio_profile - ratio_uncertainty, ratio_profile + ratio_uncertainty, alpha=0.2)
     p.xlabel(labels[0])
     p.ylabel(labels[1])
@@ -372,7 +371,7 @@ def make_plot(name='rho', M_min=12.5, M_max=13.0, with_guide=False,
     if (profile<=0).all():
         profile = -profile
 
-    plot_kwargs = {'label': f"$10^{{{M_min}}} < M_{{200m}} / M_{{\\odot}} < 10^{{{M_max}}}$"} | plot_kwargs
+    plot_kwargs = {'label': f"$10^{{{M_min}}} - 10^{{{M_max}}} \,{{\\rm M}}_{{\\odot}}$"} | plot_kwargs
     if name == 'mdot':
         main_line = p.plot(r, profile, **plot_kwargs)
         p.plot(r, -profile, color=main_line[0].get_color(), 
@@ -469,7 +468,7 @@ def make_profile_plots(v, tsnum=8, box="L0200N0720_HYDRO_FIDUCIAL",
     print(f"Plotting {v} profiles for {timestep_name}")
     n_panels = len(panels)
     if newfig:
-        p.figure(figsize=(n_panels*6, 5))
+        p.figure(figsize=(n_panels*6.5, 5.5))
     
     panel_i = 1
     

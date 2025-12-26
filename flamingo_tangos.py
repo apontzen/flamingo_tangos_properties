@@ -297,7 +297,8 @@ class FlamingoDensityProfileBase(spherical_region.SphericalRegionPropertyCalcula
             "_dm_mdot", "_dm_mdot_inflow", "_dm_mdot_outflow", "_gas_entropy_outflow", "_gas_entropy_inflow", \
             "_gas_temp_outflow", "_gas_temp_inflow", "_gas_density_outflow", "_gas_density_inflow", \
             "_gas_vr_inflow", "_gas_vr_outflow", "_gas_cs", \
-            "_gas_energy_inflow", "_gas_energy_outflow", "_dm_energy_inflow", "_dm_energy_outflow"
+            "_gas_energy_inflow", "_gas_energy_outflow", "_dm_energy_inflow", "_dm_energy_outflow", \
+            "_all_mass_enclosed", "_all_mdot"
 
 
     _nbins = 50
@@ -366,13 +367,15 @@ class FlamingoDensityProfileBase(spherical_region.SphericalRegionPropertyCalcula
 
             vr_dm, vr_disp_dm, mass_enc_dm, mdot_dm, mdot_inflow_dm, mdot_outflow_dm, mass_enc_2d_dm, energy_outflow_dm, energy_inflow_dm = self._get_profiles(data.dm, minrad, maxrad)
 
+            _, _, mass_enc_all, mdot_all, _, _, _, _, _ = self._get_profiles(data, minrad, maxrad)
 
         finally:
             data['vel'] += vel_centre  
 
         return den, p, entropy, temp, rho, vr, vr_disp, mass_enc, mass_enc_2d, mass_enc_dm, mass_enc_2d_dm, vr_dm, vr_disp_dm, \
                 mdot, mdot_inflow, mdot_outflow, mdot_dm, mdot_inflow_dm, mdot_outflow_dm, entropy_out, entropy_in, temp_out, \
-                temp_in, den_out, den_in, vr_in, vr_out, cs, energy_inflow, energy_outflow, energy_inflow_dm, energy_outflow_dm
+                temp_in, den_out, den_in, vr_in, vr_out, cs, energy_inflow, energy_outflow, energy_inflow_dm, energy_outflow_dm, \
+                mass_enc_all, mdot_all 
 
 
     def _make_vol_weighted_profile(self, data, minrad, maxrad):
