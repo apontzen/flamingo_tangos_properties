@@ -334,12 +334,15 @@ class FlamingoDensityProfileBase(spherical_region.SphericalRegionPropertyCalcula
             data.gas['p']
             data.gas['cs'].convert_units('km s^-1')
 
+            data['energy_flow_integrand'] = (data['vr'] * (data['vel']**2).sum(axis=1)/2).in_units("erg kpc Myr^-1 Msol^-1")
+
+            # for gas, add thermal energy term
             mu = 0.59 # mean molecular weight, fully ionized, primordial
             data.gas['energy_flow_integrand'] = (data.gas['vr'] * ( 
                 (data.gas['vel']**2).sum(axis=1)/2 + 1.5 * data.gas['temp'] * pynbody.units.k / (mu*pynbody.units.m_p) 
                 )).in_units("erg kpc Myr^-1 Msol^-1")
 
-            data.dm['energy_flow_integrand'] = (data.dm['vr'] * (data.dm['vel']**2).sum(axis=1)/2).in_units("erg kpc Myr^-1 Msol^-1")
+            
 
             den = pro_vol_weighted['density']
             p = pro_vol_weighted['p']
