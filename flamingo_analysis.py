@@ -9,22 +9,27 @@ class NoHalosInStackError(ValueError):
     pass
 
 def get_xs(ts, property_name, profile):
+    if property_name.endswith("()"):
+        property_name = property_name[:-2]
     try:
-        prop = ts.halos[2].get_description(property_name)
+        prop = db.properties.providing_class(property_name, ft.FlamingoInputHandler)(ts.simulation)
         xs = prop.plot_x_values(profile)
         return xs 
     except:
+        print(f"Error in get_xs for {property_name}, using default log10 r from 0.01 to 3.0")
         num_bins = len(profile)
         return np.linspace(np.log10(0.01), np.log10(3.0), num_bins)
     
 def get_labels(ts, property_name):
+    if property_name.endswith("()"):
+        property_name = property_name[:-2]
     try:
-        prop = ts.halos[2].get_description(property_name)
+        prop = db.properties.providing_class(property_name, ft.FlamingoInputHandler)(ts.simulation)
         ylabs = prop.plot_ylabel()
         xlab = prop.plot_xlabel()
         return xlab, ylabs[prop.index_of_name(property_name)]
     except Exception as e:
-        print(f"Error in get_labels: {e}")
+        print(f"Error in get_labels for {property_name}: {e}")
         return "?", "?"
     
 def get_stack(property_name, M_min, M_max, M_name='M200m()', cut=None, earlier=None,
@@ -282,6 +287,10 @@ def _get_binned_statistics(property_name, weight_property_name, mask_property_na
                     variance = np.nanmean(property[bin_mask]**2/weights[bin_mask])/np.nanmean(weights[bin_mask]) - (binned_means[-1])**2
                     binned_range_positive.append(np.sqrt(variance))
                     binned_range_negative.append(np.sqrt(variance))
+                case 'uncertainty':
+                    variance = np.nanstd(property[bin_mask]/weights[bin_mask])**2 / bin_mask.sum()
+                    binned_range_positive.append(np.sqrt(variance))
+                    binned_range_negative.append(np.sqrt(variance))
                 case (lower_percentile, upper_percentile):
                     lower = np.nanpercentile(property[bin_mask]/weights[bin_mask], lower_percentile)
                     upper = np.nanpercentile(property[bin_mask]/weights[bin_mask], upper_percentile)
@@ -329,21 +338,21 @@ def make_plot(name='rho', M_min=12.5, M_max=13.0, with_guide=False,
 
     
     if particle == 'ratio':
-        # Create gas and dm property names
+        # Create gas and all property names
         gas_prop_name = f'gas_{prop_name}'
-        dm_prop_name = f'dm_{prop_name}'
+        all_prop_name = f'all_{prop_name}'
 
         try:
             gas_profile, gas_uncertainty, xs, labels, log10_r200 = get_stack(gas_prop_name, M_min, M_max, **(get_stack_kwargs | {'weight_by': weight_by}))
-            dm_profile, dm_uncertainty, _, _, log10_r200 = get_stack(dm_prop_name, M_min, M_max, **(get_stack_kwargs | {'weight_by': weight_by}))
+            all_profile, all_uncertainty, _, _, log10_r200 = get_stack(all_prop_name, M_min, M_max, **(get_stack_kwargs | {'weight_by': weight_by}))
         except NoHalosInStackError:
             print(f"No halos in stack for {(M_min, M_max)}")
             return 
         
         # Calculate ratio
-        profile = gas_profile / dm_profile
+        profile = gas_profile / all_profile
         # Propagate uncertainty (assuming independent errors)
-        uncertainty = profile * np.sqrt((gas_uncertainty/gas_profile)**2 + (dm_uncertainty/dm_profile)**2)
+        uncertainty = profile * np.sqrt((gas_uncertainty/gas_profile)**2 + (all_uncertainty/all_profile)**2)
         
     else:
         prop_name = f'{particle}_{prop_name}'
@@ -468,7 +477,7 @@ def make_profile_plots(v, tsnum=8, box="L0200N0720_HYDRO_FIDUCIAL",
     print(f"Plotting {v} profiles for {timestep_name}")
     n_panels = len(panels)
     if newfig:
-        p.figure(figsize=(n_panels*6.5, 5.5))
+        p.figure(figsize=(n_panels*6.9, 5.2))
     
     panel_i = 1
     
@@ -483,7 +492,8 @@ def make_profile_plots(v, tsnum=8, box="L0200N0720_HYDRO_FIDUCIAL",
         redshift_label = f"sel@{redshift_label}, plot@${z_earlier:.1f}$"
 
     if 'relative' in panels:
-        p.subplot(1, n_panels, panel_i)
+        if n_panels>1:
+            p.subplot(1, n_panels, panel_i)
         p.title(f"Relative radius profiles ({redshift_label})")
         p.gca().set_prop_cycle(None)
         for i, ra in enumerate(ranges_override):
@@ -500,7 +510,8 @@ def make_profile_plots(v, tsnum=8, box="L0200N0720_HYDRO_FIDUCIAL",
     
 
     if 'absolute' in panels:
-        p.subplot(1, n_panels, panel_i)
+        if n_panels>1:
+            p.subplot(1, n_panels, panel_i)
         p.gca().set_prop_cycle(None)
         p.title(f"Absolute radius profiles ({redshift_label})")
         for i, ra in enumerate(ranges_override):

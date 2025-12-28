@@ -23,11 +23,14 @@ def _cosmic_hubble(redshift):
     H_z = H0 * np.sqrt(OmegaM0 * (1 + redshift)**3 + OmegaL0)
     return H_z
 
-def _cosmic_crit_density_0():
+def _cosmic_crit_density(redshift):
     G = 4.30091e-6  # gravitational constant in (kpc/Msun)*(km/s)^2
-    H0 = 68.1
+    H0 = _cosmic_hubble(redshift)
     H0_kpc = H0 / 1e3  # convert H0 to km/s/kpc
     return 3 * (H0_kpc)**2 / (8 * 3.141592653589793 * G)  # Msun/kpc^3
+
+def _cosmic_crit_density_0():
+    return _cosmic_crit_density(redshift=0.0)
 
 def _cosmic_mean_density(redshift):
     OmegaM0 = 0.306
@@ -265,6 +268,57 @@ class M200m(LiveHaloProperties):
 
     def requires_property(self):
         return super().requires_property() + ['r200m']
+
+class R200mDot(LiveHaloProperties):
+    names = "r200m_dot", "r200m_dot_denominator"
+
+    def calculate(self, data, existing_properties):
+        M_profile = existing_properties['all_mass_enclosed_r200m_relative']
+        Mdot_profile = -existing_properties['all_mdot_r200m_relative'] # mdot is negative for growth (i.e. measures outflow not inflow, confusingly)
+        r200m = existing_properties['r200m']
+
+        pro = FlamingoDensityProfileRelative(None)
+
+        M200m = pro.get_interpolated_value(0.0, M_profile)
+
+        # dM/dr could be expressed in terms of density quite neatly, but we didn't calculate that so let's do it numerically -
+        # it'd amount to the same thing anyway
+        delta_r = (10**0.05-10**-0.05) * existing_properties['r200m']  # small delta r in kpc
+        dM200m_dr = (pro.get_interpolated_value(0.05, M_profile) - pro.get_interpolated_value(-0.05, M_profile)) / delta_r
+
+        Mdot_200m = -pro.get_interpolated_value(0.0, Mdot_profile) # minus because we want Mdot inward directed but profile is outflow-directed
+
+        H_of_z = _cosmic_hubble(existing_properties.timestep.redshift) # in km/s/Mpc
+        H_of_z_per_yr = H_of_z / (3.086e19) * 3.154e7  # convert to 1/yr
+
+        rho_mean = _cosmic_mean_density(existing_properties.timestep.redshift) # in Msun/kpc^3 physical
+
+        numerator = 3 * M200m * H_of_z_per_yr + Mdot_200m 
+        denominator = 4*np.pi*r200m**2 * 200 * rho_mean - dM200m_dr#, should be subdominant
+        return numerator / denominator, denominator  # -> kpc/yr
+    
+    def requires_property(self):
+        return ['all_mass_enclosed_r200m_relative', 'all_mdot_r200m_relative', 'r200m'] + super().requires_property()
+    
+
+    
+class FgasGradient(LiveHaloProperties):
+    names = "dfgas_dr"
+
+    def calculate(self, data, existing_properties):
+        Mgas_profile = existing_properties['gas_mass_enclosed_r200m_relative']
+        dm_profile = existing_properties['dm_mass_enclosed_r200m_relative']
+
+        pro = FlamingoDensityProfileRelative(None)
+
+        fgas_upper = pro.get_interpolated_value(0.1, Mgas_profile) / pro.get_interpolated_value(0.1, dm_profile)
+        fgas_lower = pro.get_interpolated_value(-0.1, Mgas_profile) / pro.get_interpolated_value(-0.1, dm_profile)
+        delta_r = (10**0.1 - 10**-0.1) * existing_properties['r200m']  # small delta r in kpc
+
+        return (fgas_upper - fgas_lower) / delta_r  
+    
+    def requires_property(self):
+        return ['gas_mass_enclosed_r200m_relative', 'dm_mass_enclosed_r200m_relative', 'r200m'] + super().requires_property()
     
 class SSFR(LiveHaloProperties):
     names = "sSFR", 
@@ -556,6 +610,21 @@ class EnthalpyProfileRelative(LiveHaloProperties, FlamingoDensityProfileRelative
     def plot_ylabel(self):
         return r"Enthalpy flow/$_{\rm inflow}/erg Myr^{-1}$", r"Enthalpy flow/$_{\rm outflow}/erg Myr^{-1}$"
     
+class ShellFlippedMdot(LiveHaloProperties, FlamingoDensityProfileRelative):
+    names = 'dm_mdot_alt_r200m_relative',
+
+    def calculate(self, data, existing_properties):
+        mdot_alt = np.zeros_like(existing_properties['dm_mdot_outflow_r200m_relative'])
+        mdot_alt[1:] = -existing_properties['dm_mdot_outflow_r200m_relative'][:-1]-existing_properties['dm_mdot_inflow_r200m_relative'][1:]
+        
+        return mdot_alt,
+
+    def requires_property(self):
+        return ['dm_mdot_outflow_r200m_relative', 'dm_mdot_inflow_r200m_relative'] + super().requires_property()
+    
+    def plot_ylabel(self):
+        return r"Alt DM Mdot",
+
 class RelativeInflowEquivalentRate(LiveHaloProperties, FlamingoDensityProfileRelative):
     names = "gas_inflow_equivalent_rate_r200m_relative",
     def calculate(self, data, existing_properties):
