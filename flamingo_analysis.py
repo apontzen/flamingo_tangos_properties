@@ -153,7 +153,11 @@ def make_flow_ratio_plot(prop_name = 'gas_mdot_inflow', M_min=12.5, M_max=13.0, 
         ratio_profile = profile1 - profile2
     ratio_uncertainty = ratio_profile * np.sqrt((uncertainty1/profile1)**2 + (uncertainty2/profile2)**2)
     
-    p.plot(r, ratio_profile, label=f"$10^{{{M_min}}} -- 10^{{{M_max}}}$")
+    if M_max < 100:
+        label = f"$10^{{{M_min}}} - 10^{{{M_max}}}$"
+    else:
+        label = f"$>10^{{{M_min}}}$"
+    p.plot(r, ratio_profile, label=label)
     p.fill_between(r, ratio_profile - ratio_uncertainty, ratio_profile + ratio_uncertainty, alpha=0.2)
     p.xlabel(labels[0])
     p.ylabel(labels[1])
@@ -342,6 +346,10 @@ def make_plot(name='rho', M_min=12.5, M_max=13.0, with_guide=False,
         gas_prop_name = f'gas_{prop_name}'
         all_prop_name = f'all_{prop_name}'
 
+        if is_function:
+            all_prop_name += '()'
+            gas_prop_name += '()'
+
         try:
             gas_profile, gas_uncertainty, xs, labels, log10_r200 = get_stack(gas_prop_name, M_min, M_max, **(get_stack_kwargs | {'weight_by': weight_by}))
             all_profile, all_uncertainty, _, _, log10_r200 = get_stack(all_prop_name, M_min, M_max, **(get_stack_kwargs | {'weight_by': weight_by}))
@@ -380,7 +388,11 @@ def make_plot(name='rho', M_min=12.5, M_max=13.0, with_guide=False,
     if (profile<=0).all():
         profile = -profile
 
-    plot_kwargs = {'label': f"$10^{{{M_min}}} - 10^{{{M_max}}} \,{{\\rm M}}_{{\\odot}}$"} | plot_kwargs
+    if M_max < 100:
+        label = f"$10^{{{M_min}}} - 10^{{{M_max}}}$"
+    else:
+        label = f"$>10^{{{M_min}}}$"
+    plot_kwargs = {'label': label + "$\,{{\\rm M}}_{{\\odot}}$"} | plot_kwargs
     if name == 'mdot':
         main_line = p.plot(r, profile, **plot_kwargs)
         p.plot(r, -profile, color=main_line[0].get_color(), 
@@ -443,7 +455,7 @@ def make_plot(name='rho', M_min=12.5, M_max=13.0, with_guide=False,
                   )
 
 #ranges = [(11.8, 12.2), (12.6, 13.0), (13.0, 13.5), (13.5, 14.0), (14.0, 15.0)]
-ranges = [(12.5, 13.0), (13.0, 13.5), (13.5, 14.0), (14.0, 15.0)]
+ranges = [(12.5, 13.0), (13.0, 13.5), (13.5, 14.0), (14.0, np.inf)][::-1]
 #ranges = [(13.4, 13.6)]
 #ranges = [(12.6, 12.8), (12.9, 13.1), (13.2, 13.4), (13.5, 13.7)]
 #ranges = [(12.5, 13.5)]
@@ -512,8 +524,8 @@ def make_profile_plots(v, tsnum=8, box="L0200N0720_HYDRO_FIDUCIAL",
     if 'absolute' in panels:
         if n_panels>1:
             p.subplot(1, n_panels, panel_i)
-        p.gca().set_prop_cycle(None)
         p.title(f"Absolute radius profiles ({redshift_label})")
+        p.gca().set_prop_cycle(None)
         for i, ra in enumerate(ranges_override):
             with_guide = i == 3 and v in plot_guides_for
             make_plot(v, ra[0], ra[1], with_guide=with_guide, with_exclusive=with_exclusive, relative=False,

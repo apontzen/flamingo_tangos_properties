@@ -458,13 +458,15 @@ class FlamingoDensityProfileBase(spherical_region.SphericalRegionPropertyCalcula
                                                           min=minrad, max=maxrad, nbins=self._nbins)
         mdot_inflow = pro_inflow['mdot']
 
-        energy_inflow = abs(pro_inflow['energy_flux'])
+        energy_inflow = abs(pro_inflow['energy_flux']) 
+        # NB above calc neglects potential; added in gas_inflow_energy_with_potential calc
             
         filt_outflow = pynbody.filt.HighPass('vr', 0)
         pro_outflow = pynbody.analysis.profile.Profile(data[filt_outflow], type='log', ndim=3,
                                                            min=minrad, max=maxrad, nbins=self._nbins)
         mdot_outflow = pro_outflow['mdot']
         energy_outflow = abs(pro_outflow['energy_flux'])
+        # NB above calc neglects potential; added in gas_inflow_energy_with_potential calc
 
         pro_2d = pynbody.analysis.profile.Profile(data, type='log', ndim=2,
                                                 min=minrad, max=maxrad, nbins=self._nbins)
@@ -573,6 +575,28 @@ class FlamingoDensityProfileRelative(FlamingoDensityProfileBase):
         minrad = existing_properties[self._radius_name] * self._min_rad
         return minrad, maxrad
     
+class FlamingoDensityFromMassProfileRelative(LiveHaloProperties, FlamingoDensityProfileRelative):
+    particle_name = "gas"
+    names = "gas_density_from_mass_r200m_relative", 
+
+    def calculate(self, data, existing_properties):
+        r200m = existing_properties['r200m']
+        gas_rho = self._get_density_estimate_from_mass_profile(existing_properties[f'{self.particle_name}_mass_enclosed_r200m_relative'], r200m)
+        return gas_rho,
+
+    def _get_density_estimate_from_mass_profile(self, mass_enclosed, r200m):
+        radii = np.logspace(np.log10(self._min_rad*r200m), np.log10(self._max_rad*r200m), self._nbins + 1)
+
+        shell_volume = 4/3 * np.pi * (radii[1:]**3 - radii[:-1]**3)
+
+        shell_mass = np.diff(np.concatenate(([0], mass_enclosed)))
+        density_estimate = shell_mass / shell_volume
+        return density_estimate 
+    
+    def requires_property(self):
+        return [f'{self.particle_name}_mass_enclosed_r200m_relative', 'r200m'] + super().requires_property()
+    
+
 class FlamingoDensityProfileAbsolute(FlamingoDensityProfileBase):
     _min_rad = 50.0  # Minimum radius in kpc
     _max_rad = 5000.0  # Maximum radius in kpc
@@ -591,6 +615,87 @@ class FlamingoDensityProfileAbsolute(FlamingoDensityProfileBase):
     def plot_xdelta(self):
         return np.log10(self._max_rad/self._min_rad)/self._nbins
     
+    
+class FlamingoDensityFromMassProfileAbsolute(LiveHaloProperties, FlamingoDensityProfileAbsolute):
+    particle_name = "gas"
+    names = "gas_density_from_mass", 
+
+    def calculate(self, data, existing_properties):
+        gas_rho = self._get_density_estimate_from_mass_profile(existing_properties[f'{self.particle_name}_mass_enclosed'])
+        return gas_rho,
+
+    def _get_density_estimate_from_mass_profile(self, mass_enclosed):
+        radii = np.logspace(np.log10(self._min_rad), np.log10(self._max_rad), self._nbins + 1)
+
+        shell_volume = 4/3 * np.pi * (radii[1:]**3 - radii[:-1]**3)
+
+        shell_mass = np.diff(np.concatenate(([0], mass_enclosed)))
+        density_estimate = shell_mass / shell_volume
+        return density_estimate 
+    
+    def requires_property(self):
+        return [f'{self.particle_name}_mass_enclosed'] + super().requires_property()
+    
+class FlamingoDmDensityFromMassProfileRelative(FlamingoDensityFromMassProfileRelative):
+    particle_name = "dm"
+    names = "dm_density_from_mass_r200m_relative",
+
+class FlamingoDmDensityFromMassProfileAbsolute(FlamingoDensityFromMassProfileAbsolute):
+    particle_name = "dm"
+    names = "dm_density_from_mass",
+
+class FlamingoAllDensityFromMassProfileRelative(FlamingoDensityFromMassProfileRelative):
+    particle_name = "all"
+    names = "all_density_from_mass_r200m_relative",
+
+class FlamingoAllDensityFromMassProfileAbsolute(FlamingoDensityFromMassProfileAbsolute):
+    particle_name = "all"
+    names = "all_density_from_mass",
+
+class FlamingoPotentialFromMassProfileAbsolute(LiveHaloProperties, FlamingoDensityProfileAbsolute):
+    names = "all_potential_from_mass",
+
+    def calculate(self, data, existing_properties):
+        G = pynbody.units.G.in_units("kpc^3 Myr^-2 Msol^-1")
+        mass_enclosed = existing_properties['all_mass_enclosed']
+        radii = np.logspace(np.log10(self._min_rad), np.log10(self._max_rad), self._nbins+1)[1:]
+
+        # potential with zero at r=0
+        # derivation assumes r^-2 density profile on average
+        # see notes 1/1/26
+        mass_enclosed_inner_edge = np.concatenate(([0], mass_enclosed[:-1]))
+        delta_mass_enclosed = mass_enclosed - mass_enclosed_inner_edge
+
+        G = 8.552e37 # kpc ergs / Msol^2
+
+        r_inner = np.concatenate(([0], radii[:-1]))
+        r_outer = radii
+
+        t1 = G*mass_enclosed_inner_edge*(1./r_inner - 1./r_outer)
+        t1[0] = 0.0 # correction for r=0, M=0 endpoint
+        t2 = G*delta_mass_enclosed / r_outer
+
+        potential = (t1+t2).cumsum() + t2/2
+        return potential,
+
+    def requires_property(self):
+        return ['all_mass_enclosed'] + super().requires_property()
+
+
+class FlamingoFlowEnergyWithPotentialAbsolute(FlamingoPotentialFromMassProfileAbsolute):
+    names = "gas_energy_with_potential_inflow", "gas_energy_with_potential_outflow"
+
+    def calculate(self, data, existing_properties):
+        potential, = super().calculate(data, existing_properties)
+        energy_inflow = existing_properties['gas_energy_inflow']/1e6 - potential * existing_properties['gas_mdot_inflow']
+        energy_outflow = existing_properties['gas_energy_outflow']/1e6 + potential * existing_properties['gas_mdot_outflow']
+        return energy_inflow, energy_outflow
+    
+    def requires_property(self):
+        return ['gas_energy_inflow', 'gas_mdot_inflow', 'gas_energy_outflow', 'gas_mdot_outflow'] + super().requires_property()
+
+
+
 class EnthalpyProfileRelative(LiveHaloProperties, FlamingoDensityProfileRelative):
     names = "gas_enthalpy_inflow_r200m_relative", "gas_enthalpy_outflow_r200m_relative"
 
@@ -729,6 +834,8 @@ def energy_flux(profile: pynbody.analysis.profile.Profile):
     #
     # profile['energy_flow_integrand'] gives mass-weighted mean of v_r (v^2/2 + 3/2 kT/(mu m_p)), while profile['mass'] gives the mass in each shell,
     # so the product is sum m v_r (v^2/2 + 3/2 kT/(mu m_p)) in each shell.
+    #
+    # Note gravitational energy is neglected here; to include it, see FlamingoFlowEnergyWithPotentialAbsolute
     ar = profile['energy_flow_integrand'] * profile['mass'] / np.diff(profile['bin_edges'])
     ar.units = profile['mass'].units * profile['energy_flow_integrand'].units / profile['bin_edges'].units
     return ar.in_units('erg Myr^-1')
