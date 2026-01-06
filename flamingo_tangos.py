@@ -255,6 +255,19 @@ class StarForm(spherical_region.SphericalRegionPropertyCalculation):
     def region_specification(self, db_data):
         return pynbody.filt.Sphere("30 kpc", db_data['shrink_center'])
     
+class CentralDensity(spherical_region.SphericalRegionPropertyCalculation):
+    names = "central_density",
+
+    @centred_calculation
+    def calculate(self, ptcls, existing_properties):
+        ptcls = ptcls.gas
+
+        index = ptcls['r'].argmin()
+
+        return ptcls['rho'][index], 
+
+    def region_specification(self, db_data):
+        return pynbody.filt.Sphere("100 kpc", db_data['shrink_center'])
 
 
 class M200m(LiveHaloProperties):
@@ -299,7 +312,6 @@ class R200mDot(LiveHaloProperties):
     
     def requires_property(self):
         return ['all_mass_enclosed_r200m_relative', 'all_mdot_r200m_relative', 'r200m'] + super().requires_property()
-    
 
     
 class FgasGradient(LiveHaloProperties):
