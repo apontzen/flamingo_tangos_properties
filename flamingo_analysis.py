@@ -200,7 +200,7 @@ def make_entropy_radius_histogram(stacked_profile, normed=True):
 
 def make_binned_by_mass_plot(property_name, weight_property_name = None, bin_name='M200m()', num_bins=15, bin_range=(12.5, 14.5),
                              ts_name=r"%FIDUCIAL/%8%", plot_kwargs={},
-                             error_range: str | tuple ='std',
+                             error_range: str | tuple ='uncertainty',
                              mask_property_name = None, mask_property_value = None,
                              x_offset=0.0):
     bin_centers, binned_means, binned_range_positive, binned_range_negative = _get_binned_statistics(property_name, weight_property_name, mask_property_name, mask_property_value, bin_name, num_bins, bin_range, ts_name, error_range)
