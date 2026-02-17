@@ -202,10 +202,38 @@ def make_binned_by_mass_plot(property_name, weight_property_name = None, bin_nam
                              ts_name=r"%FIDUCIAL/%8%", plot_kwargs={},
                              error_range: str | tuple ='std',
                              mask_property_name = None, mask_property_value = None,
+                             use_band = False,
                              x_offset=0.0):
     bin_centers, binned_means, binned_range_positive, binned_range_negative = _get_binned_statistics(property_name, weight_property_name, mask_property_name, mask_property_value, bin_name, num_bins, bin_range, ts_name, error_range)
 
-    p.errorbar(bin_centers+x_offset, binned_means, yerr=[binned_range_negative, binned_range_positive], fmt='o', **plot_kwargs)
+    if use_band:
+        N = 10
+        smooth_bin_centers = np.linspace(bin_centers[0], bin_centers[-1], len(bin_centers) * N)
+
+        from scipy.interpolate import UnivariateSpline
+
+        # Filter out NaN values for fitting
+        valid = np.isfinite(binned_means) & np.isfinite(binned_range_positive) & np.isfinite(binned_range_negative)
+        if valid.sum() >= 4:
+            s_factor = valid.sum()  # smoothing factor
+            spl_mean = UnivariateSpline(bin_centers[valid], binned_means[valid], s=s_factor * np.nanvar(binned_means[valid]), k=5)
+            spl_pos = UnivariateSpline(bin_centers[valid], binned_range_positive[valid], s=s_factor * np.nanvar(binned_range_positive[valid]), k=5)
+            spl_neg = UnivariateSpline(bin_centers[valid], binned_range_negative[valid], s=s_factor * np.nanvar(binned_range_negative[valid]), k=5)
+            smooth_means = spl_mean(smooth_bin_centers)
+            smooth_pos = spl_pos(smooth_bin_centers)
+            smooth_neg = spl_neg(smooth_bin_centers)
+        else:
+            smooth_means = np.interp(smooth_bin_centers, bin_centers[valid], binned_means[valid])
+            smooth_pos = np.interp(smooth_bin_centers, bin_centers[valid], binned_range_positive[valid])
+            smooth_neg = np.interp(smooth_bin_centers, bin_centers[valid], binned_range_negative[valid])
+
+        p.plot(smooth_bin_centers + x_offset, smooth_means, **plot_kwargs)
+        p.fill_between(smooth_bin_centers + x_offset, smooth_means - smooth_neg, smooth_means + smooth_pos, alpha=0.2, **plot_kwargs)
+        #p.fill_between(bin_centers+x_offset, binned_means-binned_range_negative, binned_means+binned_range_positive, alpha=0.2, **plot_kwargs)
+        
+    else:
+        p.errorbar(bin_centers+x_offset, binned_means, yerr=[binned_range_negative, binned_range_positive], fmt='o', **plot_kwargs)
+
     p.xlabel(f'log10({bin_name})')
     p.ylabel(property_name)
     p.title(f'{property_name} binned by {bin_name}')
@@ -286,6 +314,7 @@ def _get_binned_statistics(property_name, weight_property_name, mask_property_na
         bin_mask = mask & (mass > 10**bin_edges[i]) & (mass <= 10**bin_edges[i+1])
         if bin_mask.sum() > 0:
             binned_means.append(np.nanmean(property[bin_mask])/np.nanmean(weights[bin_mask]))
+            # binned_means.append(np.nanmedian(property[bin_mask]/weights[bin_mask]))
             match error_range:
                 case 'std':
                     variance = np.nanmean(property[bin_mask]**2/weights[bin_mask])/np.nanmean(weights[bin_mask]) - (binned_means[-1])**2
