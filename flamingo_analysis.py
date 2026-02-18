@@ -214,7 +214,7 @@ def make_binned_by_mass_plot(property_name, weight_property_name = None, bin_nam
 
         # Filter out NaN values for fitting
         valid = np.isfinite(binned_means) & np.isfinite(binned_range_positive) & np.isfinite(binned_range_negative)
-        if valid.sum() >= 4:
+        if valid.sum() >= 40000:
             s_factor = valid.sum()  # smoothing factor
             spl_mean = UnivariateSpline(bin_centers[valid], binned_means[valid], s=s_factor * np.nanvar(binned_means[valid]), k=5)
             spl_pos = UnivariateSpline(bin_centers[valid], binned_range_positive[valid], s=s_factor * np.nanvar(binned_range_positive[valid]), k=5)
@@ -228,7 +228,8 @@ def make_binned_by_mass_plot(property_name, weight_property_name = None, bin_nam
             smooth_neg = np.interp(smooth_bin_centers, bin_centers[valid], binned_range_negative[valid])
 
         p.plot(smooth_bin_centers + x_offset, smooth_means, **plot_kwargs)
-        p.fill_between(smooth_bin_centers + x_offset, smooth_means - smooth_neg, smooth_means + smooth_pos, alpha=0.2, **plot_kwargs)
+        plot_kwargs_no_label = {**plot_kwargs, 'label': None}
+        p.fill_between(smooth_bin_centers + x_offset, smooth_means - smooth_neg, smooth_means + smooth_pos, alpha=0.2, **plot_kwargs_no_label)
         #p.fill_between(bin_centers+x_offset, binned_means-binned_range_negative, binned_means+binned_range_positive, alpha=0.2, **plot_kwargs)
         
     else:
