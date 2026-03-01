@@ -547,6 +547,7 @@ class FlamingoEntropyRadiusHistogram(FlamingoDensityProfileBase):
 
         try:
             data['vel']-=vel_centre
+            pynbody.analysis.cosmology.add_hubble(data)  
             outflow_mask = gas['vr'] > 0
             inflow_mask = gas['vr'] < 0
 

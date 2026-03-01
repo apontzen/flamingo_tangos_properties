@@ -179,6 +179,11 @@ def make_entropy_radius_stack(M_min=12.5, M_max=13.0, box="L0200N0360_HYDRO_FIDU
     if mask.sum() == 0:
         raise NoHalosInStackError("No halos in stack")
     stacked_profile = np.nansum([p for p in profile[mask]], axis=0)
+    p.title(f"$10^{{{M_min}}} < M_{{200m}} / M_{{\\odot}} < 10^{{{M_max}}}$" + (f", {restriction}" if restriction else ""))
+
+    import virial_scalings as vs
+    r = vs.radius(10**((M_min + M_max)/2))
+    p.axvline(np.log10(r), color='red', linestyle='--', label=r"$r_{200m}$")
 
     make_entropy_radius_histogram(stacked_profile, normed)
 
@@ -188,15 +193,17 @@ def make_entropy_radius_histogram(stacked_profile, normed=True):
     if normed:
         stacked_profile /= np.sum(stacked_profile, axis=1, keepdims=True)
 
-    p.imshow(stacked_profile.T, aspect='auto', origin='lower', extent=extent)
+    p.imshow(stacked_profile.T, aspect='auto', origin='lower', extent=extent, cmap='gray')
     r_bins = np.logspace(np.log10(histclass._min_rad), np.log10(histclass._max_rad), stacked_profile.shape[0]+1)
     r_bins = 0.5 * (r_bins[1:] + r_bins[:-1])
     entropy_bins = np.logspace(np.log10(histclass._min_entropy), np.log10(histclass._max_entropy), stacked_profile.shape[1]+1)
     entropy_bins = 0.5 * (entropy_bins[1:] + entropy_bins[:-1])
     mean_entropy = (entropy_bins[np.newaxis, :] * stacked_profile).sum(axis=1) / stacked_profile.sum(axis=1)
     p.plot(np.log10(r_bins), np.log10(mean_entropy), color='red', label='Mean Entropy')
-    p.xlabel('log10(r)')
-    p.ylabel('log10(entropy)')
+    p.xlabel('log10(r/Mpc)')
+    p.ylabel('log10(K/simulation unit)')
+    p.colorbar().set_label(r'$p(\log_{10} K | r)$')
+
 
 def make_binned_by_mass_plot(property_name, weight_property_name = None, bin_name='M200m()', num_bins=15, bin_range=(12.5, 14.5),
                              ts_name=r"%FIDUCIAL/%8%", plot_kwargs={},
