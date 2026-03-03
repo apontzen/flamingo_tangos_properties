@@ -34,3 +34,19 @@ def virial_specific_energy(M200m, h=0.68, z=0, OmegaM0=0.307):
     vel = velocity(M200m, h=h, z=z, OmegaM0=OmegaM0)
     spec_energy = 0.5 * vel**2
     return spec_energy* pynbody.units.Unit("km^2 s^-2").in_units("erg Msol^-1")
+
+def radius(M200m, h=0.68, z=0, OmegaM0=0.307):
+    G = pynbody.units.Unit("G")
+    Msol = pynbody.units.Unit("Msol")
+    H0 = pynbody.units.Unit("100 km s^-1 Mpc^-1") * h
+
+    # R200m from M200m = (4pi/3)*200*rho_mean*R200m^3
+    # rho_mean = 3*OmegaM0*H(z)^2 / (8*pi*G)
+    # => R200m = [ 3*M200m / (4*pi*200*rho_mean) ]^(1/3)
+    #          = [ 2*G*M200m / (200*OmegaM0*H(z)^2) ]^(1/3)
+    Hz2 = H0**2 * OmegaM0 * (1+z)**3  # H(z)^2 in matter-dominated approx for rho_mean calc
+    # Actually rho_mean(z) = 3*OmegaM0*(1+z)^3*H0^2/(8*pi*G)
+    # So R200m = [2*G*M / (200*OmegaM0*(1+z)^3*H0^2)]^(1/3)
+    r = (2 * G * M200m * Msol / (200 * OmegaM0 * (1+z)**3 * H0**2))**(1,3)
+
+    return r.in_units("Mpc")

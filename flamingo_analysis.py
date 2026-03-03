@@ -169,7 +169,17 @@ def make_flow_ratio_plots(prop_name = 'gas_mdot_inflow', tsnum=1):
     p.title("Inflow Ratio Profile")
     p.legend()
 
-def make_entropy_radius_stack(M_min=12.5, M_max=13.0, box="L0200N0360_HYDRO_FIDUCIAL", tsnum=8, restriction=None, normed=True):
+def legend(*labels):
+    handles, _ = p.gca().get_legend_handles_labels()
+    selected = [(h, l) for (h, l) in zip(handles, labels) if l is not None]
+    p.legend([h for h, l in selected], [l for h, l in selected])
+
+def make_entropy_radius_stack_in_and_out(band_percentiles=(33,67), M_min=12.5, M_max=13.0):
+    make_entropy_radius_stack(normed=True, band_percentiles=band_percentiles, restriction='outflow', M_min=M_min, M_max=M_max)
+    make_entropy_radius_stack(normed=True, band_percentiles=band_percentiles, restriction='inflow', M_min=M_min, M_max=M_max)
+    legend('$r_{200m}$', None, 'outflow', None, None, 'inflow') 
+
+def make_entropy_radius_stack(M_min=12.5, M_max=13.0, box="L0200N0360_HYDRO_FIDUCIAL", tsnum=4, restriction=None, normed=True, band_percentiles=None):
     property_name = 'gas_entropy_radius_histogram'
     
     if restriction is not None:
@@ -185,24 +195,98 @@ def make_entropy_radius_stack(M_min=12.5, M_max=13.0, box="L0200N0360_HYDRO_FIDU
     r = vs.radius(10**((M_min + M_max)/2))
     p.axvline(np.log10(r), color='red', linestyle='--', label=r"$r_{200m}$")
 
-    make_entropy_radius_histogram(stacked_profile, normed)
+    make_entropy_radius_histogram(stacked_profile, normed, band_percentiles=band_percentiles)
 
-def make_entropy_radius_histogram(stacked_profile, normed=True):
+def make_entropy_radius_histogram(stacked_profile, normed=True, band_percentiles=None):
     histclass = ft.FlamingoEntropyRadiusHistogram
     extent = [np.log10(histclass._min_rad), np.log10(histclass._max_rad), np.log10(histclass._min_entropy), np.log10(histclass._max_entropy)]
     if normed:
         stacked_profile /= np.sum(stacked_profile, axis=1, keepdims=True)
 
-    p.imshow(stacked_profile.T, aspect='auto', origin='lower', extent=extent, cmap='gray')
-    r_bins = np.logspace(np.log10(histclass._min_rad), np.log10(histclass._max_rad), stacked_profile.shape[0]+1)
-    r_bins = 0.5 * (r_bins[1:] + r_bins[:-1])
-    entropy_bins = np.logspace(np.log10(histclass._min_entropy), np.log10(histclass._max_entropy), stacked_profile.shape[1]+1)
-    entropy_bins = 0.5 * (entropy_bins[1:] + entropy_bins[:-1])
-    mean_entropy = (entropy_bins[np.newaxis, :] * stacked_profile).sum(axis=1) / stacked_profile.sum(axis=1)
-    p.plot(np.log10(r_bins), np.log10(mean_entropy), color='red', label='Mean Entropy')
+    if band_percentiles is not None:
+        make_entropy_radius_percentile_band(stacked_profile, lower_percentile=band_percentiles[0], upper_percentile=band_percentiles[1], median_percentile=50)
+    else:
+        p.imshow(stacked_profile.T, aspect='auto', origin='lower', extent=extent, cmap='gray')
+        p.xlabel('log10(r/Mpc)')
+        p.ylabel('log10(K/simulation unit)')
+        p.colorbar().set_label(r'$p(\log_{10} K | r)$')
+
+def _get_percentile_from_histogram(stacked_profile, percentile, normed=True):
+    """Given a 2D histogram (r_bins x K_bins), compute the K value at a given percentile
+    for each radial bin, assuming constant probability within each K bin."""
+    histclass = ft.FlamingoEntropyRadiusHistogram
+    entropy_edges = np.logspace(np.log10(histclass._min_entropy), np.log10(histclass._max_entropy), stacked_profile.shape[1] + 1)
+    log_entropy_edges = np.log10(entropy_edges)
+
+    # Normalize each radial bin to get a proper conditional PDF
+    row_sums = np.sum(stacked_profile, axis=1, keepdims=True)
+    row_sums[row_sums == 0] = 1.0
+    pdf = stacked_profile / row_sums
+
+    # Compute cumulative distribution along the K axis for each r bin
+    cdf = np.cumsum(pdf, axis=1)
+
+    n_r = stacked_profile.shape[0]
+    percentile_values = np.full(n_r, np.nan)
+    frac = percentile / 100.0
+
+    for i in range(n_r):
+        cdf_row = cdf[i]
+        if cdf_row[-1] == 0:
+            continue
+        # Find the bin where the CDF crosses the desired percentile
+        idx = np.searchsorted(cdf_row, frac)
+        if idx == 0:
+            # Interpolate within the first bin
+            t = frac / cdf_row[0] if cdf_row[0] > 0 else 0.0
+            percentile_values[i] = log_entropy_edges[0] + t * (log_entropy_edges[1] - log_entropy_edges[0])
+        elif idx >= len(cdf_row):
+            percentile_values[i] = log_entropy_edges[-1]
+        else:
+            # Linear interpolation within the bin in log-K space
+            cdf_lo = cdf_row[idx - 1]
+            cdf_hi = cdf_row[idx]
+            if cdf_hi == cdf_lo:
+                t = 0.5
+            else:
+                t = (frac - cdf_lo) / (cdf_hi - cdf_lo)
+            percentile_values[i] = log_entropy_edges[idx] + t * (log_entropy_edges[idx + 1] - log_entropy_edges[idx])
+
+    return percentile_values
+
+
+def _get_radial_bin_centers():
+    """Return log10 of radial bin centers for the entropy-radius histogram."""
+    histclass = ft.FlamingoEntropyRadiusHistogram
+    r_edges = np.logspace(np.log10(histclass._min_rad), np.log10(histclass._max_rad), -1)  # placeholder
+    # We don't know n_r yet, so this is deferred; use the profile shape instead.
+    return histclass
+
+
+def make_entropy_radius_percentile_band(stacked_profile, lower_percentile=16, upper_percentile=84,
+                                            median_percentile=50, **plot_kwargs):
+    """Plot a band between specified percentiles of the conditional entropy PDF at each radius."""
+    histclass = ft.FlamingoEntropyRadiusHistogram
+    n_r = stacked_profile.shape[0]
+    r_edges = np.logspace(np.log10(histclass._min_rad), np.log10(histclass._max_rad), n_r + 1)
+    log_r_centers = 0.5 * (np.log10(r_edges[1:]) + np.log10(r_edges[:-1]))
+
+    log_k_lower = _get_percentile_from_histogram(stacked_profile, lower_percentile)
+    log_k_upper = _get_percentile_from_histogram(stacked_profile, upper_percentile)
+    log_k_median = _get_percentile_from_histogram(stacked_profile, median_percentile)
+
+    valid = np.isfinite(log_k_lower) & np.isfinite(log_k_upper) & np.isfinite(log_k_median)
+
+    default_kwargs = {'alpha': 0.3}
+    band_kwargs = {**default_kwargs, **plot_kwargs}
+    label = band_kwargs.pop('label', f'{lower_percentile}–{upper_percentile}th percentile')
+
+    p.fill_between(log_r_centers[valid], log_k_lower[valid], log_k_upper[valid], label=label, **band_kwargs)
+    line_kwargs = {k: v for k, v in band_kwargs.items() if k not in ('alpha',)}
+    p.plot(log_r_centers[valid], log_k_median[valid], label=f'{median_percentile}th percentile', **line_kwargs)
+
     p.xlabel('log10(r/Mpc)')
     p.ylabel('log10(K/simulation unit)')
-    p.colorbar().set_label(r'$p(\log_{10} K | r)$')
 
 
 def make_binned_by_mass_plot(property_name, weight_property_name = None, bin_name='M200m()', num_bins=15, bin_range=(12.5, 14.5),
