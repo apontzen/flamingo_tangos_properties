@@ -255,6 +255,54 @@ class StarForm(spherical_region.SphericalRegionPropertyCalculation):
     def region_specification(self, db_data):
         return pynbody.filt.Sphere("30 kpc", db_data['shrink_center'])
     
+class FlowImageAligned(spherical_region.SphericalRegionPropertyCalculation):
+    names = "aligned_13_entropy_image", "aligned_13_density_image", "aligned_13_vx_image", "aligned_13_vy_image", \
+            "aligned_12_entropy_image", "aligned_12_density_image", "aligned_12_vx_image", "aligned_12_vy_image", 
+    
+    @classmethod
+    def plot_extent(cls):
+        return 4.0 # units of virial radius
+
+    def plot_xlabel(self):
+        return r"x/$r_{200m}$"
+
+    def plot_ylabel(self):
+        return r"y/$r_{200m}$"
+
+    #def plot_clabel(self):
+    #    return "K", r"$\rho / M_{\odot} \mathrm{kpc}^{-3}$", r"$v_x$ (km/s)", r"$v_y$ (km/s)"
+    
+    def region_specification(self, db_data):
+        return pynbody.filt.Sphere(db_data['r200m']*3.0, db_data['shrink_center'])
+    
+    @classmethod
+    def _make_image_set(cls, ptcls, radius):
+        entropy_image = pynbody.plot.sph.image(ptcls, qty='Entropies', width=radius*4, return_data=True, noplot=True, resolution=200)
+        density_image = pynbody.plot.sph.image(ptcls, qty='rho', width=radius*4, return_data=True, noplot=True, resolution=200)
+        vx_image = pynbody.plot.sph.image(ptcls, qty='vx', width=radius*4, return_data=True, noplot=True, resolution=50)
+        vy_image = pynbody.plot.sph.image(ptcls, qty='vy', width=radius*4, return_data=True, noplot=True, resolution=50)
+
+        return entropy_image, density_image, vx_image, vy_image
+        
+    @centred_calculation
+    def calculate(self, ptcls, existing_properties):
+        vel_centre = _get_velocity_centre(ptcls)
+        ptcls['vel']-=vel_centre
+        pynbody.analysis.cosmology.add_hubble(ptcls)  
+
+        from flow_orientation import gas_flow_alignment
+        radius = existing_properties['r200m']
+        ptcls = ptcls.gas
+        with gas_flow_alignment(ptcls, radius):
+            imageset_13 = self._make_image_set(ptcls, radius)
+            with ptcls.rotate_y(90):
+                imageset_12 = self._make_image_set(ptcls, radius)
+
+        return imageset_13 + imageset_12
+    
+    def requires_property(self):
+        return super().requires_property() + ['r200m']
+    
 class CentralDensity(spherical_region.SphericalRegionPropertyCalculation):
     names = "central_density",
 
@@ -355,6 +403,16 @@ class RadialVelocityProfile(spherical_region.SphericalRegionPropertyCalculation)
         return pro['vr'], pro['vr_disp']
 
     
+def _get_velocity_centre(data, region_sizes=['25 kpc', '50 kpc', '200 kpc']):
+    for region_size in region_sizes:
+        try:
+            region = data[pynbody.filt.Sphere(region_size)]
+            vel_centre = np.average(region['vel'], axis=0, weights=region['mass'])
+            return vel_centre
+        except ZeroDivisionError:
+            pass
+    return np.average(data['vel'], axis=0, weights=data['mass'])
+
 class FlamingoDensityProfileBase(spherical_region.SphericalRegionPropertyCalculation):
     names = "_gas_density", "_gas_p", "_gas_entropy", \
             "_gas_temp", "_gas_rho", "_gas_vr", "_gas_vr_disp", "_gas_mass_enclosed", "_gas_mass_enclosed_2d", \
@@ -369,20 +427,12 @@ class FlamingoDensityProfileBase(spherical_region.SphericalRegionPropertyCalcula
 
     _nbins = 50
 
-    def _get_velocity_centre(self, data, region_sizes=['25 kpc', '50 kpc', '200 kpc']):
-        for region_size in region_sizes:
-            try:
-                region = data[pynbody.filt.Sphere(region_size)]
-                vel_centre = np.average(region['vel'], axis=0, weights=region['mass'])
-                return vel_centre
-            except ZeroDivisionError:
-                pass
-        return np.average(data['vel'], axis=0, weights=data['mass'])
+    
 
     @centred_calculation
     def calculate(self, data: pynbody.snapshot.SimSnap, existing_properties):
         minrad, maxrad  = self._get_min_max_radius(existing_properties)
-        vel_centre = self._get_velocity_centre(data)
+        vel_centre = _get_velocity_centre(data)
 
         try:
             data['vel']-=vel_centre
@@ -533,7 +583,7 @@ class FlamingoEntropyRadiusHistogram(FlamingoDensityProfileBase):
 
     @centred_calculation
     def calculate(self, data, existing_properties):
-        vel_centre = self._get_velocity_centre(data)
+        vel_centre = _get_velocity_centre(data)
 
         minrad = self._min_rad * 1e3  # convert to kpc
         maxrad = self._max_rad * 1e3

@@ -4,6 +4,11 @@ import tangos as db
 import flamingo_tangos as ft
 import pandas as pd
 
+# For entropy:
+# internal units are Msol^{-2/3} kpc^2 km^2 s^{-2}
+# multiply by mu mu_e^{2/3} m_p^(5/3) and convert to get keV cm^2 (mu = 0.59)
+internal_to_keV_cm2 = 0.570304
+
 
 class NoHalosInStackError(ValueError):
     pass
@@ -169,21 +174,32 @@ def make_flow_ratio_plots(prop_name = 'gas_mdot_inflow', tsnum=1):
     p.title("Inflow Ratio Profile")
     p.legend()
 
-def legend(*labels):
-    handles, _ = p.gca().get_legend_handles_labels()
+def legend(labels, **kwargs):
+    from matplotlib.legend import _get_legend_handles
+    ax = p.gca()
+    handles = list(_get_legend_handles([ax]))
     selected = [(h, l) for (h, l) in zip(handles, labels) if l is not None]
-    p.legend([h for h, l in selected], [l for h, l in selected])
+    p.legend([h for h, l in selected], [l for h, l in selected], **kwargs)
 
-def make_entropy_radius_stack_in_and_out(band_percentiles=(33,67), M_min=12.5, M_max=13.0):
-    make_entropy_radius_stack(normed=True, band_percentiles=band_percentiles, restriction='outflow', M_min=M_min, M_max=M_max)
-    make_entropy_radius_stack(normed=True, band_percentiles=band_percentiles, restriction='inflow', M_min=M_min, M_max=M_max)
-    legend('$r_{200m}$', None, 'outflow', None, None, 'inflow') 
+def make_entropy_radius_stack_in_and_out(band_percentiles=(33,67), M_min=12.5, M_max=13.0, 
+                                         box="L0200N0360_HYDRO_FIDUCIAL", tsnum=8):
+    make_entropy_radius_stack(normed=True, band_percentiles=band_percentiles, 
+                              restriction='outflow', M_min=M_min, M_max=M_max, box=box, tsnum=tsnum)
+    make_entropy_radius_stack(normed=True, band_percentiles=band_percentiles, 
+                              restriction='inflow', M_min=M_min, M_max=M_max, box=box, tsnum=tsnum)
+    legend(['$r_{200m}$', None, 'outflow', None, None, 'inflow']) 
 
-def make_entropy_radius_stack(M_min=12.5, M_max=13.0, box="L0200N0360_HYDRO_FIDUCIAL", tsnum=4, restriction=None, normed=True, band_percentiles=None):
+def make_entropy_radius_stack(M_min=12.5, M_max=13.0, box="L0200N0360_HYDRO_FIDUCIAL", 
+                              tsnum=4, restriction=None, normed=True, band_percentiles=None, 
+                              earlier=None):
     property_name = 'gas_entropy_radius_histogram'
     
     if restriction is not None:
         property_name += f"_{restriction}"
+    
+    if earlier is not None:
+        property_name = f"earlier({earlier}).{property_name}"
+        
     profile, mass = db.get_timestep(f"{box}/%{tsnum}.hdf5").calculate_all(property_name, 'M200m()')
     mask = (mass > 10**M_min) & (mass < 10**M_max)
     if mask.sum() == 0:
@@ -289,7 +305,8 @@ def make_entropy_radius_percentile_band(stacked_profile, lower_percentile=16, up
     p.ylabel('log10(K/simulation unit)')
 
 
-def make_binned_by_mass_plot(property_name, weight_property_name = None, bin_name='M200m()', num_bins=15, bin_range=(12.5, 14.5),
+def make_binned_by_mass_plot(property_name, weight_property_name = None, 
+                             bin_name='M200m()', num_bins=15, bin_range=(12.5, 14.5),
                              ts_name=r"%FIDUCIAL/%8%", plot_kwargs={},
                              error_range: str | tuple ='uncertainty',
                              mask_property_name = None, mask_property_value = None,
@@ -298,30 +315,9 @@ def make_binned_by_mass_plot(property_name, weight_property_name = None, bin_nam
     bin_centers, binned_means, binned_range_positive, binned_range_negative = _get_binned_statistics(property_name, weight_property_name, mask_property_name, mask_property_value, bin_name, num_bins, bin_range, ts_name, error_range)
 
     if use_band:
-        N = 10
-        smooth_bin_centers = np.linspace(bin_centers[0], bin_centers[-1], len(bin_centers) * N)
-
-        from scipy.interpolate import UnivariateSpline
-
-        # Filter out NaN values for fitting
-        valid = np.isfinite(binned_means) & np.isfinite(binned_range_positive) & np.isfinite(binned_range_negative)
-        if valid.sum() >= 40000:
-            s_factor = valid.sum()  # smoothing factor
-            spl_mean = UnivariateSpline(bin_centers[valid], binned_means[valid], s=s_factor * np.nanvar(binned_means[valid]), k=5)
-            spl_pos = UnivariateSpline(bin_centers[valid], binned_range_positive[valid], s=s_factor * np.nanvar(binned_range_positive[valid]), k=5)
-            spl_neg = UnivariateSpline(bin_centers[valid], binned_range_negative[valid], s=s_factor * np.nanvar(binned_range_negative[valid]), k=5)
-            smooth_means = spl_mean(smooth_bin_centers)
-            smooth_pos = spl_pos(smooth_bin_centers)
-            smooth_neg = spl_neg(smooth_bin_centers)
-        else:
-            smooth_means = np.interp(smooth_bin_centers, bin_centers[valid], binned_means[valid])
-            smooth_pos = np.interp(smooth_bin_centers, bin_centers[valid], binned_range_positive[valid])
-            smooth_neg = np.interp(smooth_bin_centers, bin_centers[valid], binned_range_negative[valid])
-
-        p.plot(smooth_bin_centers + x_offset, smooth_means, **plot_kwargs)
+        p.plot(bin_centers + x_offset, binned_means, **plot_kwargs)
         plot_kwargs_no_label = {**plot_kwargs, 'label': None}
-        p.fill_between(smooth_bin_centers + x_offset, smooth_means - smooth_neg, smooth_means + smooth_pos, alpha=0.2, **plot_kwargs_no_label)
-        #p.fill_between(bin_centers+x_offset, binned_means-binned_range_negative, binned_means+binned_range_positive, alpha=0.2, **plot_kwargs)
+        p.fill_between(bin_centers + x_offset, binned_means - binned_range_negative, binned_means + binned_range_positive, alpha=0.2, **plot_kwargs_no_label)
         
     else:
         p.errorbar(bin_centers+x_offset, binned_means, yerr=[binned_range_negative, binned_range_positive], fmt='o', **plot_kwargs)
@@ -359,11 +355,11 @@ def _calculate_all_or_return_none(timestep, *args):
 def _get_binned_statistics(property_name, weight_property_name, mask_property_name, mask_property_value, bin_name, num_bins, bin_range, ts_name, error_range):
 
     ts = db.get_timestep(ts_name)
-    mass, property, weights, maskvals = _calculate_all_or_return_none(ts, bin_name, property_name, weight_property_name, mask_property_name)
-    if weight_property_name is None:
+    mass, property, weights, maskvals = _calculate_all_or_return_none(ts, bin_name, property_name, 
+                                                                      weight_property_name if weight_property_name!='median' else None, mask_property_name)
+    if weight_property_name is None or weight_property_name == 'median':
         weights = np.ones_like(property)
 
-    
     bin_edges = np.linspace(bin_range[0], bin_range[1], num_bins+1)
     bin_centers = 0.5 * (bin_edges[1:] + bin_edges[:-1])
 
@@ -405,7 +401,10 @@ def _get_binned_statistics(property_name, weight_property_name, mask_property_na
     for i in range(num_bins):
         bin_mask = mask & (mass > 10**bin_edges[i]) & (mass <= 10**bin_edges[i+1])
         if bin_mask.sum() > 0:
-            binned_means.append(np.nanmean(property[bin_mask])/np.nanmean(weights[bin_mask]))
+            if weight_property_name == 'median':
+                binned_means.append(np.nanmedian(property[bin_mask]/weights[bin_mask]))
+            else:       
+                binned_means.append(np.nanmean(property[bin_mask])/np.nanmean(weights[bin_mask]))
             # binned_means.append(np.nanmedian(property[bin_mask]/weights[bin_mask]))
             match error_range:
                 case 'std':
@@ -726,3 +725,61 @@ def add_cosmic_mean_flow(tsnum=8, box="L0200N0360_HYDRO_FIDUCIAL", particle=None
     flow_min, flow_max = p.gca().get_ylim()
     mask = (flow > flow_min) & (flow < flow_max)
     p.plot(r_vals[mask], flow[mask], color='grey', linestyle=':', label="Cosmic Mean Flow")
+
+
+def make_stacked_entropy_image_plot(timestep_name, axis='13', M_min=12.8, M_max=13.2,
+                                    vmin=1.7, vmax=3.0, cmap='RdYlBu_r', 
+                                    with_colorbar=False, with_quiverkey=False, panel_label=None):
+    mean, err, _, _, _ = get_stack(f'aligned_{axis}_entropy_image', timestep_name=timestep_name, M_min=M_min, M_max=M_max)
+    
+    mean*=internal_to_keV_cm2
+
+    p.imshow(np.log10(mean), origin='lower', extent=(-2,2,-2,2), vmin=vmin, vmax=vmax, cmap=cmap)
+
+    mean_vx, err, _, _, _ = get_stack(f'aligned_{axis}_vx_image', timestep_name=timestep_name, M_min=M_min, M_max=M_max)
+    mean_vy, err, _, _, _ = get_stack(f'aligned_{axis}_vy_image', timestep_name=timestep_name, M_min=M_min, M_max=M_max)
+    axis_names = {'1': 'z', '2': 'y', '3': 'x'}
+    axis_name_x = axis_names[axis[1]]
+    axis_name_y = axis_names[axis[0]]
+    p.xlabel(f"${axis_name_x} / r_{{200m}}$")
+    p.ylabel(f"${axis_name_y} / r_{{200m}}$")
+
+    if panel_label:
+        p.gca().text(0.02, 0.98, f"{panel_label} ${axis_name_x}-{axis_name_y}$", transform=p.gca().transAxes,
+            color='black', va='top', ha='left',
+            bbox=dict(boxstyle='round,pad=0.2', facecolor='white', edgecolor='black'))
+
+
+    ax = p.gca()
+    for scale in [1.0, 2.0]:
+        ax.add_patch(p.Circle((0, 0), scale, fill=False, color='white', 
+                                linestyle=':', linewidth=1))
+
+    p.xticks([-1.5, -1.0, -0.5, 0.0, 0.5, 1.0, 1.5], 
+             ["$-1.5$", "$-1.0$", "$-0.5$", "$0.0$", "$0.5$", "$1.0$", "$1.5$"])
+    p.yticks([-1.5, -1.0, -0.5, 0.0, 0.5, 1.0, 1.5], 
+             ["$-1.5$", "$-1.0$", "$-0.5$", "$0.0$", "$0.5$", "$1.0$", "$1.5$"])
+
+    mean_vx = mean_vx[1::2, 1::2]
+    mean_vy = mean_vy[1::2, 1::2]
+    vector_resolution = len(mean_vx)
+    width = 4.0
+    pixel_size = width/vector_resolution
+
+    X, Y = np.meshgrid(np.linspace(-width / 2 + pixel_size/2, width / 2 - pixel_size/2, vector_resolution),
+                       np.linspace(-width / 2 + pixel_size/2, width / 2 - pixel_size/2, vector_resolution))
+
+    # Invert: dark background → light arrow, light background → dark arrow
+    Q = ax.quiver(X, Y, mean_vx, mean_vy, scale=2500., color='k')
+
+    if with_quiverkey:
+        from pynbody.plot import util
+        qk = util.PynbodyQuiverKey(Q, 0.8, 0.1,
+                                    500, "500 km/s",
+                                    color='k', labelcolor='k',
+                                    boxedgecolor='k', boxfacecolor='w')
+        qk.set_zorder(6)
+        p.gca().add_artist(qk)
+
+    if with_colorbar:   
+        p.colorbar().set_label(r"$\log_{10} \langle K \rangle / {\rm kpc^2\,km^2\,M_{\odot}^{-2/3}\,s^{-2}}$")
