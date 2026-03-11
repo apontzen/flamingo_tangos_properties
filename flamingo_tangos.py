@@ -257,7 +257,8 @@ class StarForm(spherical_region.SphericalRegionPropertyCalculation):
     
 class FlowImageAligned(spherical_region.SphericalRegionPropertyCalculation):
     names = "aligned_13_entropy_image", "aligned_13_density_image", "aligned_13_vx_image", "aligned_13_vy_image", \
-            "aligned_12_entropy_image", "aligned_12_density_image", "aligned_12_vx_image", "aligned_12_vy_image", 
+            "aligned_12_entropy_image", "aligned_12_density_image", "aligned_12_vx_image", "aligned_12_vy_image", \
+            "flow_alignment_eigvals"
     
     @classmethod
     def plot_extent(cls):
@@ -290,15 +291,19 @@ class FlowImageAligned(spherical_region.SphericalRegionPropertyCalculation):
         ptcls['vel']-=vel_centre
         pynbody.analysis.cosmology.add_hubble(ptcls)  
 
-        from flow_orientation import gas_flow_alignment
+        from flow_orientation import gas_flow_alignment, get_gas_flow_quadratic_form
         radius = existing_properties['r200m']
         ptcls = ptcls.gas
+
+        Q = get_gas_flow_quadratic_form(ptcls, radius)
+        eigvals, _ = np.linalg.eigh(Q)
+
         with gas_flow_alignment(ptcls, radius):
             imageset_13 = self._make_image_set(ptcls, radius)
             with ptcls.rotate_y(90):
                 imageset_12 = self._make_image_set(ptcls, radius)
 
-        return imageset_13 + imageset_12
+        return imageset_13 + imageset_12 + (eigvals,)
     
     def requires_property(self):
         return super().requires_property() + ['r200m']
