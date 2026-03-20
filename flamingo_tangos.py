@@ -461,6 +461,7 @@ class FlamingoDensityProfileBase(spherical_region.SphericalRegionPropertyCalcula
             data.gas['rho']
             data.gas['p']
             data.gas['cs'].convert_units('km s^-1')
+            data.gas['ps20_cooling_time'].convert_units('Gyr')
 
             data['energy_flow_integrand'] = (data['vr'] * (data['vel']**2).sum(axis=1)/2).in_units("erg kpc Myr^-1 Msol^-1")
 
@@ -478,7 +479,7 @@ class FlamingoDensityProfileBase(spherical_region.SphericalRegionPropertyCalcula
             temp = pro_vol_weighted['temp']
             rho = pro_vol_weighted['rho']
             cs = pro_vol_weighted['cs']
-            cooltime = pro_vol_weighted['ps20_cooling_time'].in_units("Gyr")
+            cooltime = pro_vol_weighted['ps20_cooling_time']
 
             filt_outflow = pynbody.filt.HighPass('vr', 0)
             pro_outflow_vr_weighted = self._make_vr_weighted_profile(data.gas[filt_outflow], minrad, maxrad)
@@ -486,7 +487,7 @@ class FlamingoDensityProfileBase(spherical_region.SphericalRegionPropertyCalcula
             temp_out = pro_outflow_vr_weighted['temp']
             den_out = pro_outflow_vr_weighted['density']
             vr_out = pro_outflow_vr_weighted['vr']
-            cooltime_out = pro_outflow_vr_weighted['ps20_cooling_time'].in_units("Gyr")
+            cooltime_out = pro_outflow_vr_weighted['ps20_cooling_time']
 
             filt_inflow = pynbody.filt.LowPass('vr', 0)
             pro_inflow_vr_weighted = self._make_vr_weighted_profile(data.gas[filt_inflow], minrad, maxrad)
@@ -494,7 +495,7 @@ class FlamingoDensityProfileBase(spherical_region.SphericalRegionPropertyCalcula
             temp_in = pro_inflow_vr_weighted['temp']
             den_in = pro_inflow_vr_weighted['density']
             vr_in = pro_inflow_vr_weighted['vr']
-            cooltime_in = pro_inflow_vr_weighted['ps20_cooling_time'].in_units("Gyr")
+            cooltime_in = pro_inflow_vr_weighted['ps20_cooling_time']
 
             vr, vr_disp, mass_enc, mdot, mdot_inflow, mdot_outflow, mass_enc_2d, energy_outflow, energy_inflow = self._get_profiles(data.gas, minrad, maxrad)
 

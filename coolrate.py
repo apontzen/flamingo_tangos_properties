@@ -10,6 +10,47 @@ m_H = 1.6735575e-24 # g
 X_H = 0.76 # this should probably be metal-dependent but we are only going for rough timescales not precision
 Z_sol = 0.0134 # Asplund et al. 2009, this is the solar metallicity by mass, which is what the PS20 tables use
 
+def entropy_to_density(K, T):
+    """Convert adiabatic invariant K and temperature T to density.
+
+    Parameters
+    ----------
+    K : float or array
+        Adiabatic invariant K = p * rho^(-5/3), in units Msol^(-2/3) kpc^2 km^2 s^-2
+    T : float or array
+        Temperature in K
+
+    Returns
+    -------
+    float or array
+        Density in Msol kpc^-3
+
+    Notes
+    -----
+    Assumes a fully ionised, primordial-composition plasma (X_H = 0.76).
+    For an ideal gas, p = rho k_B T / (mu m_H), giving
+    rho = (k_B T / (K mu m_H))^(3/2).
+    """
+    k_B = 1.380649e-16  # erg/K (CGS)
+
+    # Mean molecular weight for fully ionised H + He: mu = 4 / (5 X + 3)
+    mu = 4.0 / (5.0 * X_H + 3.0)  # ~ 0.588
+
+    # Unit conversion factors
+    Msol_g = 1.989e33   # g per Msol
+    kpc_cm = 3.0857e21  # cm per kpc
+    km_cm  = 1.0e5      # cm per km
+
+    # Convert K from [Msol^(-2/3) kpc^2 km^2 s^-2] to CGS [g^(-2/3) cm^4 s^-2]
+    K_cgs = K * Msol_g**(-2.0/3.0) * kpc_cm**2 * km_cm**2
+
+    # Solve rho = (k_B T / (K mu m_H))^(3/2) in g/cm^3
+    rho_cgs = (k_B * T / (K_cgs * mu * m_H))**1.5
+
+    # Convert g/cm^3 -> Msol/kpc^3
+    return rho_cgs * kpc_cm**3 / Msol_g
+
+
 class PloeckingerSchayeCoolingRate:
     def __init__(self, filename=None):
         if filename is None:
@@ -64,7 +105,7 @@ class PloeckingerSchayeCoolingRate:
     
     def internal_energy(self, redshift, temp_K, metallicity_Zsun, nH_cm3):
         metallicity_Zsun = np.maximum(metallicity_Zsun, 1e-10) 
-        return 10.**self._u_interpolator((redshift, np.log10(temp_K), np.log10(metallicity_Zsun), np.log10(nH_cm3)))
+        return 10.**self._u_interpolator((redshift, np.log10(temp_K), np.log10(metallicity_Zsun), np.log10(nH_cm3))) # erg g^-1
 
     
 @pynbody.snapshot.swift.SwiftSnap.derived_quantity
