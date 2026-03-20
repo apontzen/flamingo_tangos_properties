@@ -4,6 +4,7 @@ from tangos.properties.pynbody import spherical_region
 from tangos.properties import LiveHaloProperties
 from tangos.properties.pynbody.centring import centred_calculation
 import pynbody, pynbody.halo
+import coolrate # for derived property ps20_cooling_time
 
 import numpy as np
 
@@ -63,6 +64,11 @@ class FlamingoInputHandler(tangos.input_handlers.pynbody.Gadget4HDFSubfindInputH
             # hackety hack! Seems like swift snapshot not fully wrapped?
             f._shared_arrays = True
             f.wrap()
+
+            # Also, there is a big table lookup for the following calculation, which we don't want to do separately
+            # on each process, so we pre-calculate the cooling rates here
+
+            _ = f.gas['ps20_cooling_time']
         return f
     
     def enumerate_objects(self, ts_extension, object_typetag="halo", min_halo_particles=100):
@@ -427,6 +433,7 @@ class FlamingoDensityProfileBase(spherical_region.SphericalRegionPropertyCalcula
             "_gas_temp_outflow", "_gas_temp_inflow", "_gas_density_outflow", "_gas_density_inflow", \
             "_gas_vr_inflow", "_gas_vr_outflow", "_gas_cs", \
             "_gas_energy_inflow", "_gas_energy_outflow", "_dm_energy_inflow", "_dm_energy_outflow", \
+            "_gas_cooltime", "_gas_cooltime_inflow", "_gas_cooltime_outflow", \
             "_all_mass_enclosed", "_all_mdot"
 
 
@@ -471,6 +478,7 @@ class FlamingoDensityProfileBase(spherical_region.SphericalRegionPropertyCalcula
             temp = pro_vol_weighted['temp']
             rho = pro_vol_weighted['rho']
             cs = pro_vol_weighted['cs']
+            cooltime = pro_vol_weighted['ps20_cooling_time'].in_units("Gyr")
 
             filt_outflow = pynbody.filt.HighPass('vr', 0)
             pro_outflow_vr_weighted = self._make_vr_weighted_profile(data.gas[filt_outflow], minrad, maxrad)
@@ -478,6 +486,7 @@ class FlamingoDensityProfileBase(spherical_region.SphericalRegionPropertyCalcula
             temp_out = pro_outflow_vr_weighted['temp']
             den_out = pro_outflow_vr_weighted['density']
             vr_out = pro_outflow_vr_weighted['vr']
+            cooltime_out = pro_outflow_vr_weighted['ps20_cooling_time'].in_units("Gyr")
 
             filt_inflow = pynbody.filt.LowPass('vr', 0)
             pro_inflow_vr_weighted = self._make_vr_weighted_profile(data.gas[filt_inflow], minrad, maxrad)
@@ -485,6 +494,7 @@ class FlamingoDensityProfileBase(spherical_region.SphericalRegionPropertyCalcula
             temp_in = pro_inflow_vr_weighted['temp']
             den_in = pro_inflow_vr_weighted['density']
             vr_in = pro_inflow_vr_weighted['vr']
+            cooltime_in = pro_inflow_vr_weighted['ps20_cooling_time'].in_units("Gyr")
 
             vr, vr_disp, mass_enc, mdot, mdot_inflow, mdot_outflow, mass_enc_2d, energy_outflow, energy_inflow = self._get_profiles(data.gas, minrad, maxrad)
 
@@ -499,6 +509,7 @@ class FlamingoDensityProfileBase(spherical_region.SphericalRegionPropertyCalcula
         return den, p, entropy, temp, rho, vr, vr_disp, mass_enc, mass_enc_2d, mass_enc_dm, mass_enc_2d_dm, vr_dm, vr_disp_dm, \
                 mdot, mdot_inflow, mdot_outflow, mdot_dm, mdot_inflow_dm, mdot_outflow_dm, entropy_out, entropy_in, temp_out, \
                 temp_in, den_out, den_in, vr_in, vr_out, cs, energy_inflow, energy_outflow, energy_inflow_dm, energy_outflow_dm, \
+                cooltime, cooltime_in, cooltime_out, \
                 mass_enc_all, mdot_all 
 
 
@@ -564,7 +575,9 @@ class FlamingoDensityProfileBase(spherical_region.SphericalRegionPropertyCalcula
                 r"T$_{\rm outflow}/K$", r"T$_{\rm inflow}/K$", r"$\rho_{\rm outflow}/M_{\odot} kpc^{-3}$", r"$\rho_{\rm inflow}/M_{\odot} kpc^{-3}$", \
                 r"v$_{\rm inflow}/km s^{-1}$", r"v$_{\rm outflow}/km s^{-1}$", r"c$_s/km s^{-1}$", \
                 r"energy flow/$_{\rm inflow}/erg Myr^{-1}$", r"energy flow/$_{\rm outflow}/erg Myr^{-1}$", \
-                r"DM energy flow/$_{\rm inflow}/erg Myr^{-1}$", r"DM energy flow/$_{\rm outflow}/erg Myr^{-1}$"
+                r"DM energy flow/$_{\rm inflow}/erg Myr^{-1}$", r"DM energy flow/$_{\rm outflow}/erg Myr^{-1}$", \
+                r"cooling time/$_{\rm total}/Gyr$", r"cooling time/$_{\rm inflow}/Gyr$", r"cooling time/$_{\rm outflow}/Gyr$", \
+                r"$M(<r)/M_{\odot}$", r"$\dot{M}/M_{\odot} yr^{-1}$"
 
     def plot_xlog(self):
         return False
