@@ -3,6 +3,7 @@ import numpy as np
 import tangos as db
 import flamingo_tangos as ft
 import pandas as pd
+from scipy.interpolate import RegularGridInterpolator
 
 # For entropy:
 # internal units are Msol^{-2/3} kpc^2 km^2 s^{-2}
@@ -12,6 +13,37 @@ internal_to_keV_cm2 = 0.570304
 
 class NoHalosInStackError(ValueError):
     pass
+
+def _sample_on_circle(image, radius, n_bins):
+    """Interpolate a 2-D image on a circle of given pixel radius about the centre.
+
+    Returns (phi, values) where phi is equally spaced in [0, 2pi).
+    """
+    ny, nx = image.shape
+    cy, cx = (ny - 1) / 2.0, (nx - 1) / 2.0
+    interp = RegularGridInterpolator(
+        (np.arange(ny, dtype=float), np.arange(nx, dtype=float)),
+        image, method='linear', bounds_error=True)
+    phi = np.linspace(0, 2 * np.pi, n_bins, endpoint=False)
+    pts = np.column_stack((cy + radius * np.sin(phi),
+                           cx + radius * np.cos(phi)))
+    return phi, interp(pts)
+
+def get_vr_on_circle(vx, vy, radius, n_bins):
+    """Return (phi, vr) where phi is equally spaced in [0, 2pi) and vr is the
+    radially outward velocity component sampled at the given pixel radius from
+    the image centre.
+
+    Parameters
+    ----------
+    vx, vy : 2-D arrays of shape (ny, nx)
+    radius  : float, pixels from image centre
+    n_bins  : int, number of equally spaced phi samples
+    """
+    phi, vx_ring = _sample_on_circle(vx, radius, n_bins)
+    _,   vy_ring = _sample_on_circle(vy, radius, n_bins)
+    vr = vx_ring * np.cos(phi) + vy_ring * np.sin(phi)
+    return phi, vr
 
 def get_xs(ts, property_name, profile):
     if property_name.endswith("()"):
@@ -435,7 +467,7 @@ def _get_binned_statistics(property_name, weight_property_name, mask_property_na
 
 def make_plot(name='rho', M_min=12.5, M_max=13.0, with_guide=False,
               relative=True, exclusive=False, with_exclusive=False,
-              weight_by = None,
+              weight_by = None, rescale=1.0,
               with_alternative_ts=None, particle='gas',
               get_stack_kwargs={}, 
               plot_kwargs={}, norm_guide=False,
@@ -494,6 +526,9 @@ def make_plot(name='rho', M_min=12.5, M_max=13.0, with_guide=False,
         except NoHalosInStackError:
             print(f"No halos in stack for {(M_min, M_max)}")
             return 
+
+    profile*=rescale
+    uncertainty*=rescale
 
     r = 10**xs
 
@@ -598,7 +633,7 @@ def make_histogram(histogram_property, tsnum=8, box="L0200N0720_HYDRO_FIDUCIAL")
 def make_profile_plots(v, tsnum=8, box="L0200N0720_HYDRO_FIDUCIAL", 
                        newfig=True, with_exclusive=False, norm_guide=False, weight_by=None,
                        particle='gas', plot_kwargs={}, get_stack_kwargs={}, ranges_override=None,
-                       panels=('relative','absolute'), with_legend=True,
+                       panels=('relative','absolute'), with_legend=True, rescale=1.0,
                        mark_r200=False):
     global ranges, mass_name 
     if ranges_override is None:
@@ -634,7 +669,7 @@ def make_profile_plots(v, tsnum=8, box="L0200N0720_HYDRO_FIDUCIAL",
                       with_alternative_ts=False, 
                       get_stack_kwargs=get_stack_kwargs | {'timestep_name': timestep_name},
                       norm_guide=norm_guide, particle=particle, plot_kwargs=plot_kwargs, weight_by=weight_by,
-                      mark_r200=mark_r200)
+                      mark_r200=mark_r200, rescale=rescale)
         
         if newfig and with_legend:
             p.legend()
@@ -651,7 +686,7 @@ def make_profile_plots(v, tsnum=8, box="L0200N0720_HYDRO_FIDUCIAL",
             make_plot(v, ra[0], ra[1], with_guide=with_guide, with_exclusive=with_exclusive, relative=False,
                     with_alternative_ts=False, get_stack_kwargs=get_stack_kwargs|{'timestep_name': timestep_name},
                     norm_guide=norm_guide, particle=particle, plot_kwargs=plot_kwargs, weight_by=weight_by,
-                    mark_r200=mark_r200)
+                    mark_r200=mark_r200,rescale=rescale)
         
         if n_panels == 2:
             p.gca().yaxis.tick_right()
@@ -781,5 +816,158 @@ def make_stacked_entropy_image_plot(timestep_name, axis='13', M_min=12.8, M_max=
         qk.set_zorder(6)
         p.gca().add_artist(qk)
 
-    if with_colorbar:   
+    if with_colorbar:
         p.colorbar().set_label(r"$\log_{10} \langle K \rangle / {\rm kpc^2\,km^2\,M_{\odot}^{-2/3}\,s^{-2}}$")
+
+def make_stacked_vr_plot(timestep_name, axis='13', M_min=12.8, M_max=13.2,
+                         r_frac=1.0, n_bins=64, plot_kwargs={}, with_quadratic_reference=False,
+                         with_mean_reference=False, stack_mode='mean'):
+    """Plot the stacked radial velocity as a function of azimuthal angle at a
+    given fraction of r200m.
+
+    Parameters
+    ----------
+    r_frac      : float, radius in units of r200m at which to evaluate vr
+    n_bins      : int, number of equally spaced phi bins
+    stack_mode  : str, how to combine per-halo vr profiles (currently 'mean')
+    """
+    ts = db.get_timestep(timestep_name)
+    vx_images, _, mass = ts.calculate_all(
+        f'(aligned_{axis}_vx_image, log10(r200m))', 'M200m()')
+    vy_images, _, _ = ts.calculate_all(
+        f'(aligned_{axis}_vy_image, log10(r200m))', 'M200m()')
+
+    mask = (mass > 10**M_min) & (mass < 10**M_max)
+    if mask.sum() == 0:
+        raise NoHalosInStackError("No halos in stack")
+
+    # Images span -2 to +2 r200m; convert r_frac to pixels
+    n_pixels = vx_images[mask][0].shape[0]
+    radius_pixels = r_frac * n_pixels / 4.0
+
+    vr_all = []
+    for vx, vy in zip(vx_images[mask], vy_images[mask]):
+        phi, vr_i = get_vr_on_circle(vx, vy, radius_pixels, n_bins)
+        vr_all.append(vr_i)
+
+    vr_array = np.array(vr_all)
+
+    axis_names = {'1': 'z', '2': 'y', '3': 'x'}
+    axis_name_x = axis_names[axis[1]]
+    axis_name_y = axis_names[axis[0]]
+
+    if stack_mode == 'mean':
+        vr = np.nanmean(vr_array, axis=0)
+        main_line = p.plot(phi, vr, **plot_kwargs)
+    else:
+        lower_p, upper_p = stack_mode
+        vr_lower = np.nanpercentile(vr_array, lower_p, axis=0)
+        vr_upper = np.nanpercentile(vr_array, upper_p, axis=0)
+        vr = np.nanmedian(vr_array, axis=0)
+        main_line = p.plot(phi, vr, **plot_kwargs)
+        p.fill_between(phi, vr_lower, vr_upper,
+                       alpha=0.2, color=main_line[0].get_color(), label='_nolegend_')
+
+    color = main_line[0].get_color()
+
+    if with_mean_reference:
+        p.axhline(np.mean(vr), color=color, linestyle=':')
+
+    if with_quadratic_reference:
+        # Reference curve from stacked flow_alignment_eigvals.
+        # Eigenvalues are stored reversed: index 0 = axis 3, 1 = axis 2, 2 = axis 1.
+        # axis[1] is the image x-direction, axis[0] is the image y-direction.
+        ts = db.get_timestep(timestep_name)
+        eigvals, mass = ts.calculate_all('flow_alignment_eigvals', 'M200m()')
+        mask = (mass > 10**M_min) & (mass < 10**M_max)
+        if mask.sum() > 0:
+            mean_eigvals = np.nanmean(np.stack(eigvals[mask]), axis=0)
+            if axis=='13':
+                lambda_a = mean_eigvals[0]
+                lambda_b = mean_eigvals[2]
+            elif axis=='12':
+                lambda_a = mean_eigvals[1]
+                lambda_b = mean_eigvals[2]
+            phi_ref = np.linspace(0, 2 * np.pi, 256, endpoint=False)
+            vr_ref = lambda_a * np.cos(phi_ref)**2 + lambda_b * np.sin(phi_ref)**2
+            p.plot(phi_ref, vr_ref, ':', color=color)
+
+    p.axhline(0, color='grey', linestyle=':')
+    p.xlabel(r"$\phi$")
+    p.ylabel(r"$v_r$ [km s$^{-1}$]")
+    p.title(f"$v_r$ at $r = {r_frac:.2f}\\,r_{{200m}}$, "
+            f"$10^{{{M_min}}} < M_{{200m}}/M_\\odot < 10^{{{M_max}}}$, "
+            f"({axis_name_x}–{axis_name_y} plane)")
+    p.xticks([0, np.pi/2, np.pi, 3*np.pi/2, 2*np.pi],
+             ["$0$", r"$\pi/2$", r"$\pi$", r"$3\pi/2$", r"$2\pi$"])
+
+def make_stacked_entropy_angle_plot(timestep_name, axis='13', M_min=12.8, M_max=13.2,
+                                    r_frac=1.0, n_bins=64, plot_kwargs={},
+                                    stack_mode='mean', show_reference_values=False):
+    """Plot the stacked log10 entropy as a function of azimuthal angle at a
+    given fraction of r200m.
+
+    Parameters
+    ----------
+    r_frac     : float, radius in units of r200m at which to evaluate the entropy
+    n_bins     : int, number of equally spaced phi bins
+    stack_mode : 'mean' or a tuple (lower_p, upper_p) of percentiles
+    """
+    ts = db.get_timestep(timestep_name)
+    images, _, mass = ts.calculate_all(
+        f'(aligned_{axis}_entropy_image, log10(r200m))', 'M200m()')
+
+    mask = (mass > 10**M_min) & (mass < 10**M_max)
+    if mask.sum() == 0:
+        raise NoHalosInStackError("No halos in stack")
+
+    n_pixels = images[mask][0].shape[0]
+    radius_pixels = r_frac * n_pixels / 4.0
+
+    entropy_all = []
+    for img in images[mask]:
+        phi, ring = _sample_on_circle(img * internal_to_keV_cm2, radius_pixels, n_bins)
+        entropy_all.append(np.log10(ring))
+
+    entropy_array = np.array(entropy_all)
+
+    axis_names = {'1': 'z', '2': 'y', '3': 'x'}
+    axis_name_x = axis_names[axis[1]]
+    axis_name_y = axis_names[axis[0]]
+
+    if stack_mode == 'mean':
+        entropy_ring = np.nanmean(entropy_array, axis=0)
+        main_line = p.plot(phi, entropy_ring, **plot_kwargs)
+    else:
+        lower_p, upper_p = stack_mode
+        entropy_lower = np.nanpercentile(entropy_array, lower_p, axis=0)
+        entropy_upper = np.nanpercentile(entropy_array, upper_p, axis=0)
+        entropy_ring = np.nanmedian(entropy_array, axis=0)
+        main_line = p.plot(phi, entropy_ring, **plot_kwargs)
+        p.fill_between(phi, entropy_lower, entropy_upper,
+                       alpha=0.2, color=main_line[0].get_color(), label='_nolegend_')
+
+    color = main_line[0].get_color()
+
+    if show_reference_values:
+        # Stacked inflow / outflow reference values at this radius
+        ts = db.get_timestep(timestep_name)
+        log10_r = np.log10(r_frac)
+        for restriction, linestyle, ref_label in [('inflow',  '--', 'inflow'),
+                                                ('outflow', ':',  'outflow')]:
+            prop = f'at({log10_r}, gas_entropy_{restriction}_r200m_relative)'
+            vals, mass = ts.calculate_all(prop, 'M200m()')
+            mask = (mass > 10**M_min) & (mass < 10**M_max)
+            if mask.sum() == 0:
+                continue
+            mean_val = np.nanmean(vals[mask]) * internal_to_keV_cm2
+            p.axhline(np.log10(mean_val), color=color, linestyle=linestyle,
+                    label=ref_label)
+
+    p.xlabel(r"$\phi$")
+    p.ylabel(r"$\log_{10}(K\,/\,{\rm keV\,cm^2})$")
+    p.title(f"Entropy at $r = {r_frac:.2f}\\,r_{{200m}}$, "
+            f"$10^{{{M_min}}} < M_{{200m}}/M_\\odot < 10^{{{M_max}}}$, "
+            f"({axis_name_x}–{axis_name_y} plane)")
+    p.xticks([0, np.pi/2, np.pi, 3*np.pi/2, 2*np.pi],
+             ["$0$", r"$\pi/2$", r"$\pi$", r"$3\pi/2$", r"$2\pi$"])
