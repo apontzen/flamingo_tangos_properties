@@ -56,7 +56,7 @@ def compression_mach(sim):
     mach = SimArray(np.zeros(len(sim)), units=h.units * theta.units / cs.units)
     compressing = theta < 0
     mach[compressing] = h[compressing] * np.abs(theta[compressing]) / cs[compressing]
-    return mach
+    return mach.in_units("1")
 
 
 @pynbody.derived_array

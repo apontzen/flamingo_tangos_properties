@@ -503,7 +503,7 @@ class FlamingoDensityProfileBase(spherical_region.SphericalRegionPropertyCalcula
 
             vr_dm, vr_disp_dm, mass_enc_dm, mdot_dm, mdot_inflow_dm, mdot_outflow_dm, mass_enc_2d_dm, energy_outflow_dm, energy_inflow_dm, _ = self._get_profiles(data.dm, minrad, maxrad)
 
-            _, _, mass_enc_all, mdot_all, _, _, _, _, _ = self._get_profiles(data, minrad, maxrad)
+            _, _, mass_enc_all, mdot_all, _, _, _, _, _, _ = self._get_profiles(data, minrad, maxrad)
 
         finally:
             data['vel'] += vel_centre  
@@ -532,7 +532,7 @@ class FlamingoDensityProfileBase(spherical_region.SphericalRegionPropertyCalcula
         vr_disp = pro['vr_disp']
         mass_enc = pro['mass_enc']
         mdot = pro['mdot']
-        if len(data.gas)>0:
+        if len(data.dm) == 0 and len(data.gas) > 0:
             entropy_generation = pro['entropy_generation_rate']
         else:
             entropy_generation = np.zeros_like(mass_enc)
@@ -583,7 +583,7 @@ class FlamingoDensityProfileBase(spherical_region.SphericalRegionPropertyCalcula
                 r"energy flow/$_{\rm inflow}/erg Myr^{-1}$", r"energy flow/$_{\rm outflow}/erg Myr^{-1}$", \
                 r"DM energy flow/$_{\rm inflow}/erg Myr^{-1}$", r"DM energy flow/$_{\rm outflow}/erg Myr^{-1}$", \
                 r"cooling time/$_{\rm total}/Gyr$", r"cooling time/$_{\rm inflow}/Gyr$", r"cooling time/$_{\rm outflow}/Gyr$", \
-                r"$M(<r)/M_{\odot}$", r"$\dot{M}/M_{\odot} yr^{-1}$", r"$\dot{K}/M_{\odot}^{-2/3} kpc^2 km^2 s^{-2} Myr^{-1}$"
+                r"$M(<r)/M_{\odot}$", r"$\dot{M}/M_{\odot} yr^{-1}$", r"$\dot{K}/{\rm M_{\odot}^{-2/3} kpc^2 km^2 s^{-2} Myr^{-1}}$"
 
     def plot_xlog(self):
         return False
