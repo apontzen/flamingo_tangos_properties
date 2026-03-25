@@ -787,8 +787,8 @@ def make_stacked_entropy_image_plot(timestep_name, axis='13', M_min=12.8, M_max=
 
     ax = p.gca()
     for scale in [1.0, 2.0]:
-        ax.add_patch(p.Circle((0, 0), scale, fill=False, color='white', 
-                                linestyle=':', linewidth=2))
+        ax.add_patch(p.Circle((0, 0), scale, fill=False, color='grey', 
+                                linewidth=2))
 
     p.xticks([-1.5, -1.0, -0.5, 0.0, 0.5, 1.0, 1.5], 
              ["$-1.5$", "$-1.0$", "$-0.5$", "$0.0$", "$0.5$", "$1.0$", "$1.5$"])

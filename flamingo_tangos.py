@@ -5,6 +5,7 @@ from tangos.properties import LiveHaloProperties
 from tangos.properties.pynbody.centring import centred_calculation
 import pynbody, pynbody.halo
 import coolrate # for derived property ps20_cooling_time
+import entropy_generation # for derived properties entropy_generation_rate
 
 import numpy as np
 
@@ -434,13 +435,12 @@ class FlamingoDensityProfileBase(spherical_region.SphericalRegionPropertyCalcula
             "_gas_vr_inflow", "_gas_vr_outflow", "_gas_cs", \
             "_gas_energy_inflow", "_gas_energy_outflow", "_dm_energy_inflow", "_dm_energy_outflow", \
             "_gas_cooltime", "_gas_cooltime_inflow", "_gas_cooltime_outflow", \
-            "_all_mass_enclosed", "_all_mdot"
+            "_all_mass_enclosed", "_all_mdot", "_gas_entropy_generation"
 
 
     _nbins = 50
 
     
-
     @centred_calculation
     def calculate(self, data: pynbody.snapshot.SimSnap, existing_properties):
         minrad, maxrad  = self._get_min_max_radius(existing_properties)
@@ -461,6 +461,7 @@ class FlamingoDensityProfileBase(spherical_region.SphericalRegionPropertyCalcula
             data.gas['rho']
             data.gas['p']
             data.gas['cs'].convert_units('km s^-1')
+            data.gas['entropy_generation_rate'].convert_units('Msol^-2/3 kpc^2 km^2 s^-2 Myr^-1')
             data.gas['ps20_cooling_time'].convert_units('Gyr')
 
             data['energy_flow_integrand'] = (data['vr'] * (data['vel']**2).sum(axis=1)/2).in_units("erg kpc Myr^-1 Msol^-1")
@@ -497,10 +498,10 @@ class FlamingoDensityProfileBase(spherical_region.SphericalRegionPropertyCalcula
             vr_in = pro_inflow_vr_weighted['vr']
             cooltime_in = pro_inflow_vr_weighted['ps20_cooling_time']
 
-            vr, vr_disp, mass_enc, mdot, mdot_inflow, mdot_outflow, mass_enc_2d, energy_outflow, energy_inflow = self._get_profiles(data.gas, minrad, maxrad)
+            vr, vr_disp, mass_enc, mdot, mdot_inflow, mdot_outflow, mass_enc_2d, energy_outflow, energy_inflow, entropy_generation = self._get_profiles(data.gas, minrad, maxrad)
 
 
-            vr_dm, vr_disp_dm, mass_enc_dm, mdot_dm, mdot_inflow_dm, mdot_outflow_dm, mass_enc_2d_dm, energy_outflow_dm, energy_inflow_dm = self._get_profiles(data.dm, minrad, maxrad)
+            vr_dm, vr_disp_dm, mass_enc_dm, mdot_dm, mdot_inflow_dm, mdot_outflow_dm, mass_enc_2d_dm, energy_outflow_dm, energy_inflow_dm, _ = self._get_profiles(data.dm, minrad, maxrad)
 
             _, _, mass_enc_all, mdot_all, _, _, _, _, _ = self._get_profiles(data, minrad, maxrad)
 
@@ -511,7 +512,7 @@ class FlamingoDensityProfileBase(spherical_region.SphericalRegionPropertyCalcula
                 mdot, mdot_inflow, mdot_outflow, mdot_dm, mdot_inflow_dm, mdot_outflow_dm, entropy_out, entropy_in, temp_out, \
                 temp_in, den_out, den_in, vr_in, vr_out, cs, energy_inflow, energy_outflow, energy_inflow_dm, energy_outflow_dm, \
                 cooltime, cooltime_in, cooltime_out, \
-                mass_enc_all, mdot_all 
+                mass_enc_all, mdot_all, entropy_generation
 
 
     def _make_vol_weighted_profile(self, data, minrad, maxrad):
@@ -525,12 +526,16 @@ class FlamingoDensityProfileBase(spherical_region.SphericalRegionPropertyCalcula
                                                 weight_by='abs_vr') # assuming ~const particle mass
 
     def _get_profiles(self, data, minrad, maxrad):
-        pro_2d = pynbody.analysis.profile.Profile(data, type='log', ndim=3,
+        pro = pynbody.analysis.profile.Profile(data, type='log', ndim=3,
                                                 min=minrad, max=maxrad, nbins=self._nbins)
-        vr = pro_2d['vr']
-        vr_disp = pro_2d['vr_disp']
-        mass_enc = pro_2d['mass_enc']
-        mdot = pro_2d['mdot']
+        vr = pro['vr']
+        vr_disp = pro['vr_disp']
+        mass_enc = pro['mass_enc']
+        mdot = pro['mdot']
+        if len(data.gas)>0:
+            entropy_generation = pro['entropy_generation_rate']
+        else:
+            entropy_generation = np.zeros_like(mass_enc)
 
         filt_inflow = pynbody.filt.LowPass('vr', 0)
         pro_inflow = pynbody.analysis.profile.Profile(data[filt_inflow], type='log', ndim=3,
@@ -547,11 +552,11 @@ class FlamingoDensityProfileBase(spherical_region.SphericalRegionPropertyCalcula
         energy_outflow = abs(pro_outflow['energy_flux'])
         # NB above calc neglects potential; added in gas_inflow_energy_with_potential calc
 
-        pro_2d = pynbody.analysis.profile.Profile(data, type='log', ndim=2,
+        pro = pynbody.analysis.profile.Profile(data, type='log', ndim=2,
                                                 min=minrad, max=maxrad, nbins=self._nbins)
-        mass_enc_2d = pro_2d['mass_enc']
+        mass_enc_2d = pro['mass_enc']
 
-        return vr,vr_disp,mass_enc,mdot,mdot_inflow,mdot_outflow,mass_enc_2d, energy_outflow, energy_inflow
+        return vr,vr_disp,mass_enc,mdot,mdot_inflow,mdot_outflow,mass_enc_2d, energy_outflow, energy_inflow, entropy_generation
 
     def _get_min_max_radius(self, existing_properties):
         raise NotImplementedError("Subclasses must implement _get_min_max_radius method")
@@ -578,7 +583,7 @@ class FlamingoDensityProfileBase(spherical_region.SphericalRegionPropertyCalcula
                 r"energy flow/$_{\rm inflow}/erg Myr^{-1}$", r"energy flow/$_{\rm outflow}/erg Myr^{-1}$", \
                 r"DM energy flow/$_{\rm inflow}/erg Myr^{-1}$", r"DM energy flow/$_{\rm outflow}/erg Myr^{-1}$", \
                 r"cooling time/$_{\rm total}/Gyr$", r"cooling time/$_{\rm inflow}/Gyr$", r"cooling time/$_{\rm outflow}/Gyr$", \
-                r"$M(<r)/M_{\odot}$", r"$\dot{M}/M_{\odot} yr^{-1}$"
+                r"$M(<r)/M_{\odot}$", r"$\dot{M}/M_{\odot} yr^{-1}$", r"$\dot{K}/M_{\odot}^{-2/3} kpc^2 km^2 s^{-2} Myr^{-1}$"
 
     def plot_xlog(self):
         return False
@@ -590,7 +595,7 @@ class FlamingoDensityProfileBase(spherical_region.SphericalRegionPropertyCalcula
 
     def requires_property(self):
         return ["shrink_center", self._radius_name]+super().requires_property()
-
+    
 class FlamingoEntropyRadiusHistogram(FlamingoDensityProfileBase):
     _nbins = 30 # in both dimensions
     _min_rad = 0.05 # Mpc
@@ -733,6 +738,23 @@ class FlamingoAllDensityFromMassProfileRelative(FlamingoDensityFromMassProfileRe
 class FlamingoAllDensityFromMassProfileAbsolute(FlamingoDensityFromMassProfileAbsolute):
     particle_name = "all"
     names = "all_density_from_mass",
+
+class FlamingoFlowDisruption(LiveHaloProperties, FlamingoDensityProfileRelative):
+    names = "gas_dmdot_dr_r200m_relative",
+
+    def calculate(self, data, existing_properties):
+        # define flow disruption radius as radius where mdot_outflow/mdot_inflow > 1 (i.e. net outflow) for gas
+        mdot_inflow = existing_properties['gas_mdot_inflow_r200m_relative']
+        mdot_outflow = existing_properties['gas_mdot_outflow_r200m_relative']
+        gas_density = existing_properties['gas_density_r200m_relative']
+
+        mdot_net = mdot_outflow + mdot_inflow # remember mdot_inflow is negative
+        r = np.logspace(np.log10(self._min_rad*existing_properties['r200m']), np.log10(self._max_rad*existing_properties['r200m']), self._nbins)
+        dmdot_dr = abs(np.gradient(mdot_net, r)) / (r**2 * gas_density) # normalise by surface area and density to get disruption timescale in units of velocity, i.e. how quickly the flow is disrupted compared to how quickly it's flowing in
+        return dmdot_dr, 
+
+    def requires_property(self):
+        return ['gas_mdot_inflow_r200m_relative', 'gas_mdot_outflow_r200m_relative', 'gas_density_r200m_relative', 'r200m'] + super().requires_property()
 
 class FlamingoPotentialFromMassProfileAbsolute(LiveHaloProperties, FlamingoDensityProfileAbsolute):
     names = "all_potential_from_mass",
