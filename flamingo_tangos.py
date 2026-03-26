@@ -109,10 +109,12 @@ class FlamingoInputHandler(tangos.input_handlers.pynbody.Gadget4HDFSubfindInputH
         yield sim_filename.parent / f"SubSnap_{snapnum:03d}"
         yield sim_filename.parent / "HBT" / f"SubSnap_{snapnum:03d}"
         yield sim_filename.parent / "HBT" / f"{snapnum:03d}" / f"SubSnap_{snapnum:03d}"
+        yield sim_filename.parent.parent / "HBT" / f"{snapnum:03d}" / f"SubSnap_{snapnum:03d}"
 
     @classmethod
     def _sim_filename_to_hbt_filename(cls, sim_filename : pathlib.Path) -> pathlib.Path:
         for candidate in cls._sim_filename_to_hbt_filename_candidates(sim_filename):
+            print("Try",candidate)
             if candidate.with_suffix(".0.hdf5").exists() or candidate.with_suffix(".hdf5").exists():
                 return candidate
         raise ValueError(f"Could not find HBT+ halo catalogue corresponding to simulation file {sim_filename}")
@@ -223,6 +225,9 @@ class FlamingoInputHandler(tangos.input_handlers.pynbody.Gadget4HDFSubfindInputH
         parent_dir = filepath.parent
         snapnum = int(filepath.stem.split("_")[-1])
         soap_filename = parent_dir / "SOAP-HBT" / f"halo_properties_{snapnum:04d}.hdf5"
+        if soap_filename.exists():
+            return str(soap_filename)
+        soap_filename = parent_dir.parent / "SOAP-HBT" / f"halo_properties_{snapnum:04d}.hdf5"
         return str(soap_filename)
     
     def iterate_object_properties_for_timestep(self, ts_extension, object_typetag, property_names):
