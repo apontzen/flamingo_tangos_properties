@@ -121,7 +121,9 @@ def ps20_cooling_rate(snap):
 
 @pynbody.snapshot.swift.SwiftSnap.derived_quantity
 def ps20_cooling_time(snap):
-    u = snap.gas['u']
+    u = snap.gas['u'] 
+    # NB this should probably have been enthalpy not internal energy; a correction
+    # is made in the plotting of cooling rates by multiplying by 5/3.
     coolrate = snap.gas['ps20_cooling_rate']
     result = u / coolrate
     return result

@@ -16,15 +16,21 @@ def velocity(M200m, h=0.68, z=0, OmegaM0=0.307):
     G = pynbody.units.Unit("G")
     Msol = pynbody.units.Unit("Msol")
     H0 = pynbody.units.Unit("100 km s^-1 Mpc^-1") * h
+    
+    if hasattr(M200m, "__len__"):
+        M200m = pynbody.array.SimArray(M200m, "1")
 
-    vel = (100*OmegaM0)**(1./6.) * (G*M200m*Msol*H0)**(1,3) * (1+z)**(1./2.)
+    vel = (100*OmegaM0)**(1./6.) * (M200m*G*Msol*H0)**(1,3) * (1+z)**(1./2.)
 
     return vel.in_units("km s^-1")
 
 def temperature(M200m, h=0.68, z=0, OmegaM0=0.307, mu=0.59):
     kB = pynbody.units.Unit("k")
     mP = pynbody.units.Unit("m_p")
-    vel = velocity(M200m, h=h, z=z, OmegaM0=OmegaM0) * pynbody.units.Unit("km s^-1")
+    vel = velocity(M200m, h=h, z=z, OmegaM0=OmegaM0)
+    
+    if not hasattr(vel, "units"):
+        vel = vel * pynbody.units.Unit("km s^-1")
 
     temp = mu * mP / (2 * kB) * vel**2
 

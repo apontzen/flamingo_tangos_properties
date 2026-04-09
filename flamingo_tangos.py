@@ -268,8 +268,8 @@ class StarForm(spherical_region.SphericalRegionPropertyCalculation):
         return pynbody.filt.Sphere("30 kpc", db_data['shrink_center'])
     
 class FlowImageAligned(spherical_region.SphericalRegionPropertyCalculation):
-    names = "aligned_13_entropy_image", "aligned_13_density_image", "aligned_13_vx_image", "aligned_13_vy_image", \
-            "aligned_12_entropy_image", "aligned_12_density_image", "aligned_12_vx_image", "aligned_12_vy_image", \
+    names = "aligned_13_entropy_image", "aligned_13_density_image", "aligned_13_vx_image", "aligned_13_vy_image", "aligned_13_entropy_creation_image", \
+            "aligned_12_entropy_image", "aligned_12_density_image", "aligned_12_vx_image", "aligned_12_vy_image", "aligned_12_entropy_creation_image", \
             "flow_alignment_eigvals"
     
     @classmethod
@@ -290,12 +290,14 @@ class FlowImageAligned(spherical_region.SphericalRegionPropertyCalculation):
     
     @classmethod
     def _make_image_set(cls, ptcls, radius):
+        ptcls.gas['entropy_generation_rate'].convert_units('Msol^-2/3 kpc^2 km^2 s^-2 Myr^-1')
         entropy_image = pynbody.plot.sph.image(ptcls, qty='Entropies', width=radius*4, return_data=True, noplot=True, resolution=200)
+        entropy_creation_image = pynbody.plot.sph.image(ptcls, qty='entropy_generation_rate', width=radius*4, return_data=True, noplot=True, resolution=200)
         density_image = pynbody.plot.sph.image(ptcls, qty='rho', width=radius*4, return_data=True, noplot=True, resolution=200)
         vx_image = pynbody.plot.sph.image(ptcls, qty='vx', width=radius*4, return_data=True, noplot=True, resolution=50)
         vy_image = pynbody.plot.sph.image(ptcls, qty='vy', width=radius*4, return_data=True, noplot=True, resolution=50)
 
-        return entropy_image, density_image, vx_image, vy_image
+        return entropy_image, density_image, vx_image, vy_image, entropy_creation_image
         
     @centred_calculation
     def calculate(self, ptcls, existing_properties):
@@ -744,28 +746,11 @@ class FlamingoAllDensityFromMassProfileAbsolute(FlamingoDensityFromMassProfileAb
     particle_name = "all"
     names = "all_density_from_mass",
 
-class FlamingoFlowDisruption(LiveHaloProperties, FlamingoDensityProfileRelative):
-    names = "gas_dmdot_dr_r200m_relative",
-
-    def calculate(self, data, existing_properties):
-        # define flow disruption radius as radius where mdot_outflow/mdot_inflow > 1 (i.e. net outflow) for gas
-        mdot_inflow = existing_properties['gas_mdot_inflow_r200m_relative']
-        mdot_outflow = existing_properties['gas_mdot_outflow_r200m_relative']
-        gas_density = existing_properties['gas_density_r200m_relative']
-
-        mdot_net = mdot_outflow + mdot_inflow # remember mdot_inflow is negative
-        r = np.logspace(np.log10(self._min_rad*existing_properties['r200m']), np.log10(self._max_rad*existing_properties['r200m']), self._nbins)
-        dmdot_dr = abs(np.gradient(mdot_net, r)) / (r**2 * gas_density) # normalise by surface area and density to get disruption timescale in units of velocity, i.e. how quickly the flow is disrupted compared to how quickly it's flowing in
-        return dmdot_dr, 
-
-    def requires_property(self):
-        return ['gas_mdot_inflow_r200m_relative', 'gas_mdot_outflow_r200m_relative', 'gas_density_r200m_relative', 'r200m'] + super().requires_property()
-
 class FlamingoPotentialFromMassProfileAbsolute(LiveHaloProperties, FlamingoDensityProfileAbsolute):
     names = "all_potential_from_mass",
 
     def calculate(self, data, existing_properties):
-        G = pynbody.units.G.in_units("kpc^3 Myr^-2 Msol^-1")
+        G = pynbody.units.G.in_units("kpc erg Msol^-2")
         mass_enclosed = existing_properties['all_mass_enclosed']
         radii = np.logspace(np.log10(self._min_rad), np.log10(self._max_rad), self._nbins+1)[1:]
 
@@ -775,7 +760,7 @@ class FlamingoPotentialFromMassProfileAbsolute(LiveHaloProperties, FlamingoDensi
         mass_enclosed_inner_edge = np.concatenate(([0], mass_enclosed[:-1]))
         delta_mass_enclosed = mass_enclosed - mass_enclosed_inner_edge
 
-        G = 8.552e37 # kpc ergs / Msol^2
+        #G = 8.552e37 # kpc ergs / Msol^2
 
         r_inner = np.concatenate(([0], radii[:-1]))
         r_outer = radii
@@ -796,14 +781,25 @@ class FlamingoFlowEnergyWithPotentialAbsolute(FlamingoPotentialFromMassProfileAb
 
     def calculate(self, data, existing_properties):
         potential, = super().calculate(data, existing_properties)
-        energy_inflow = existing_properties['gas_energy_inflow']/1e6 - potential * existing_properties['gas_mdot_inflow']
-        energy_outflow = existing_properties['gas_energy_outflow']/1e6 + potential * existing_properties['gas_mdot_outflow']
+        # 1e6 below converts from yr^-1 (mdot properties stored this way) to Myr^-1 (energy properties)
+        energy_inflow = existing_properties['gas_energy_inflow'] - 1e6 * potential * existing_properties['gas_mdot_inflow']
+        energy_outflow = existing_properties['gas_energy_outflow'] + 1e6 * potential * existing_properties['gas_mdot_outflow']
         return energy_inflow, energy_outflow
     
     def requires_property(self):
         return ['gas_energy_inflow', 'gas_mdot_inflow', 'gas_energy_outflow', 'gas_mdot_outflow'] + super().requires_property()
 
 
+class EntropyCoolingRate(LiveHaloProperties, FlamingoDensityProfileRelative):
+    names = "gas_entropy_cooling_rate_r200m_relative",
+
+    def calculate(self, data, existing_properties):
+        # cooling rate in units of entropy per time, i.e. K Myr^-1
+        # this is mdot * T / rho^(2/3)
+        return existing_properties['gas_entropy_r200m_relative'] / existing_properties['gas_cooltime_r200m_relative'],
+
+    def requires_property(self):
+        return ['gas_entropy_r200m_relative', 'gas_cooltime_r200m_relative'] + super().requires_property()
 
 class EnthalpyProfileRelative(LiveHaloProperties, FlamingoDensityProfileRelative):
     names = "gas_enthalpy_inflow_r200m_relative", "gas_enthalpy_outflow_r200m_relative"

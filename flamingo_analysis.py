@@ -2,6 +2,8 @@ import matplotlib.pyplot as p
 import numpy as np
 import tangos as db
 import flamingo_tangos as ft
+import virial_scalings as vs 
+
 import pandas as pd
 from scipy.interpolate import RegularGridInterpolator
 
@@ -71,7 +73,7 @@ def get_labels(ts, property_name):
     
 def get_stack(property_name, M_min, M_max, M_name='M200m()', cut=None, earlier=None,
             use_log=False, timestep_name="L0200%HYDRO%/%8%",
-              use_percentile=None,weight_by=None):
+              use_percentile=None,weight_by=None,bootstrap=True):
     ts = db.get_timestep(timestep_name)
 
     if cut is not None:
@@ -88,10 +90,8 @@ def get_stack(property_name, M_min, M_max, M_name='M200m()', cut=None, earlier=N
     else:
         M_and_cutvar = M_name,
     
-    if 'r200' in property_name:
-        property_name_with_rel = f'({property_name}, 3.0)'
-    else:
-        property_name_with_rel = f'({property_name}, log10(r200m))'
+    property_name_with_rel = f'({property_name}, log10(r200m))'
+    
     
     if earlier is not None:
         if earlier>0:
@@ -142,9 +142,11 @@ def get_stack(property_name, M_min, M_max, M_name='M200m()', cut=None, earlier=N
             mean_profile = np.nansum([p for p in profiles[mask]], axis=0)/num_included
         err_profile = mean_profile/np.sqrt(num_included)
     else:
-        # nan bins should not be counted
-        mean_profile, err_profile = _get_mean_of_profiles(profiles, weights, use_log, mask)
-    
+        if bootstrap:
+            mean_profile, err_profile = _get_mean_of_profiles_with_bootstrap(profiles, weights, mask)
+        else:
+            mean_profile, err_profile = _get_mean_of_profiles(profiles, weights, use_log, mask)
+
     xs = get_xs(ts, property_name, mean_profile)
     labels = get_labels(ts, property_name)
     return mean_profile, err_profile, xs, labels, r200[mask].mean()
@@ -173,6 +175,30 @@ def _get_mean_of_profiles(profiles, weights, use_log, mask):
     err_log_profile = (np.nanstd([p for p in log_profiles], axis=0)/np.sqrt(num_included))
     err_profile = mean_profile * err_log_profile
     return mean_profile, err_profile
+
+def _get_mean_of_profiles_with_bootstrap(profiles, weights, mask, n_bootstrap=1000):
+    if weights is None:
+        weights = np.ones_like(profiles)
+    p_masked = profiles[mask]
+    w_masked = weights[mask]
+    n = len(p_masked)
+
+    def weighted_mean(p_arr, w_arr):
+        mean_w = np.nanmean(w_arr, axis=0)
+        return np.nanmean([p * w for p, w in zip(p_arr, w_arr)], axis=0) / mean_w
+
+    mean_profile = weighted_mean(p_masked, w_masked)
+
+    rng = np.random.default_rng()
+    bootstrap_means = np.array([
+        weighted_mean(p_masked[idx], w_masked[idx])
+        for idx in (rng.integers(0, n, size=n) for _ in range(n_bootstrap))
+    ])
+    err_profile = np.nanstd(bootstrap_means, axis=0)
+
+    return mean_profile, err_profile
+
+
 
 def make_flow_ratio_plot(prop_name = 'gas_mdot_inflow', M_min=12.5, M_max=13.0, box1="L0200N0360_HYDRO_STRONGEST_AGN", box2="L0200N0360_HYDRO_WEAK_AGN", tsnum=1):
     try:
@@ -239,7 +265,6 @@ def make_entropy_radius_stack(M_min=12.5, M_max=13.0, box="L0200N0360_HYDRO_FIDU
     stacked_profile = np.nansum([p for p in profile[mask]], axis=0)
     p.title(f"$10^{{{M_min}}} < M_{{200m}} / M_{{\\odot}} < 10^{{{M_max}}}$" + (f", {restriction}" if restriction else ""))
 
-    import virial_scalings as vs
     r = vs.radius(10**((M_min + M_max)/2))
     p.axvline(np.log10(r), color='red', linestyle='--', label=r"$r_{200m}$")
 
@@ -336,13 +361,22 @@ def make_entropy_radius_percentile_band(stacked_profile, lower_percentile=16, up
     p.xlabel('log10(r/Mpc)')
     p.ylabel('log10(K/simulation unit)')
 
+def plot_entropy_guide():
+    mass_ar = np.linspace(12.5, 14.5, 50)
+    entrop_in = vs.entropy(10**mass_ar, z=0.4)
+    p.plot(mass_ar, internal_to_keV_cm2 * entrop_in, color='orange', linestyle=':', label="Virial")
+
+def plot_temp_guide():
+    mass_ar = np.linspace(12.5, 14.5, 50)
+    temp_in = vs.temperature(10**mass_ar, z=0.4)
+    p.plot(mass_ar, temp_in, color='orange', linestyle=':', label="Virial")
 
 def make_binned_by_mass_plot(property_name, weight_property_name = None, 
                              bin_name='M200m()', num_bins=15, bin_range=(12.5, 14.5),
                              ts_name=r"%FIDUCIAL/%8%", plot_kwargs={},
                              error_range: str | tuple ='uncertainty',
                              mask_property_name = None, mask_property_value = None,
-                             use_band = False,
+                             use_band = False, with_fit=False,
                              x_offset=0.0):
     bin_centers, binned_means, binned_range_positive, binned_range_negative = _get_binned_statistics(property_name, weight_property_name, mask_property_name, mask_property_value, bin_name, num_bins, bin_range, ts_name, error_range)
 
@@ -353,6 +387,18 @@ def make_binned_by_mass_plot(property_name, weight_property_name = None,
         
     else:
         p.errorbar(bin_centers+x_offset, binned_means, yerr=[binned_range_negative, binned_range_positive], fmt='o', **plot_kwargs)
+
+    if with_fit:
+        def power_law_model(log_mass, offset, alpha):
+            return offset + alpha * log_mass
+    
+        from scipy.optimize import curve_fit
+        log_binned_means = np.log10(binned_means)
+        valid = np.isfinite(log_binned_means) & np.isfinite(bin_centers)
+        popt, _ = curve_fit(power_law_model, bin_centers[valid], log_binned_means[valid])
+        fit_line = 10**power_law_model(bin_centers, *popt)
+        p.plot(bin_centers, fit_line, linestyle='--', color=plot_kwargs.get('color', 'black'), label=plot_kwargs.get('label', None) + ' fit' if plot_kwargs.get('label', None) else None)
+        print(f"Fitted power-law: log_10 {property_name} = {popt[0]:.3f} + {popt[1]:.3f} * log_10 {bin_name}")
 
     p.xlabel(f'log10({bin_name})')
     p.ylabel(property_name)
@@ -471,7 +517,7 @@ def make_plot(name='rho', M_min=12.5, M_max=13.0, with_guide=False,
               with_alternative_ts=None, particle='gas',
               get_stack_kwargs={}, 
               plot_kwargs={}, norm_guide=False,
-              mark_r200=False):
+              mark_r200=False, mark_mass_enclosed=None, mark_radius=None):
     
     if name.endswith("()"):
         is_function = True
@@ -544,10 +590,10 @@ def make_plot(name='rho', M_min=12.5, M_max=13.0, with_guide=False,
         profile = -profile
 
     if M_max < 100:
-        label = f"$10^{{{M_min}}} - 10^{{{M_max}}}$"
+        label = fr"$10^{{{M_min}}} - 10^{{{M_max}}}\,{{\rm M}}_{{\odot}}$"
     else:
-        label = f"$>10^{{{M_min}}}$"
-    plot_kwargs = {'label': label + "$\,{{\\rm M}}_{{\\odot}}$"} | plot_kwargs
+        label = fr"$>10^{{{M_min}}}\,{{\rm M}}_{{\odot}}$"
+    plot_kwargs = {'label': label} | plot_kwargs
     if name == 'mdot':
         main_line = p.plot(r, profile, **plot_kwargs)
         p.plot(r, -profile, color=main_line[0].get_color(), 
@@ -559,9 +605,34 @@ def make_plot(name='rho', M_min=12.5, M_max=13.0, with_guide=False,
         # place a dot at (r200, profile at r=r200)
         from scipy.interpolate import interp1d
         interp_func = interp1d(r, profile, bounds_error=True)
-        p.plot(10.**(log10_r200-3.0), interp_func(10.**(log10_r200-3.0)), 'o', color=main_line[0].get_color())
+        if 'r200' in prop_name:
+            mark_is_at = 1.0
+        else:
+            mark_is_at = 10.**(log10_r200-3.0)
+        p.plot(mark_is_at, interp_func(mark_is_at), 'o', color=main_line[0].get_color())
 
+    if mark_radius:
+        # place a cross at mark_radius kpc
+        from scipy.interpolate import interp1d
+        interp_func = interp1d(r, profile, bounds_error=True)
+        mark_is_at = mark_radius/10.**(log10_r200)
+        p.plot(mark_is_at, interp_func(mark_is_at), 'x', color=main_line[0].get_color())
+        
     p.fill_between(r, profile-uncertainty, profile+uncertainty, alpha=0.2, color=main_line[0].get_color(), label='_nolegend_')
+
+    if mark_mass_enclosed is not None:
+        mass_enc_prop = f'{particle}_mass_enclosed'
+        if relative:
+            mass_enc_prop += '_r200m_relative'
+
+        profile_mass, _, xs, _, _ = get_stack(mass_enc_prop, M_min, M_max, **get_stack_kwargs)
+        r_mass_enc = 10**xs
+        from scipy.interpolate import interp1d
+        interp_func = interp1d(profile_mass, r_mass_enc, bounds_error=True)
+        r_enc = interp_func(mark_mass_enclosed)
+        
+        interp_func = interp1d(r, profile, bounds_error=True)
+        p.plot(r_enc, interp_func(r_enc), 'x', color=main_line[0].get_color())
 
     if name == 'vr':
         p.semilogx()
@@ -634,7 +705,7 @@ def make_profile_plots(v, tsnum=8, box="L0200N0720_HYDRO_FIDUCIAL",
                        newfig=True, with_exclusive=False, norm_guide=False, weight_by=None,
                        particle='gas', plot_kwargs={}, get_stack_kwargs={}, ranges_override=None,
                        panels=('relative','absolute'), with_legend=True, rescale=1.0,
-                       mark_r200=False):
+                       mark_r200=False, mark_mass_enclosed=None, mark_radius=None):
     global ranges, mass_name 
     if ranges_override is None:
         ranges_override = ranges
@@ -669,7 +740,8 @@ def make_profile_plots(v, tsnum=8, box="L0200N0720_HYDRO_FIDUCIAL",
                       with_alternative_ts=False, 
                       get_stack_kwargs=get_stack_kwargs | {'timestep_name': timestep_name},
                       norm_guide=norm_guide, particle=particle, plot_kwargs=plot_kwargs, weight_by=weight_by,
-                      mark_r200=mark_r200, rescale=rescale)
+                      mark_r200=mark_r200, mark_mass_enclosed=mark_mass_enclosed, mark_radius=mark_radius, 
+                      rescale=rescale)
         
         if newfig and with_legend:
             p.legend()
@@ -686,7 +758,7 @@ def make_profile_plots(v, tsnum=8, box="L0200N0720_HYDRO_FIDUCIAL",
             make_plot(v, ra[0], ra[1], with_guide=with_guide, with_exclusive=with_exclusive, relative=False,
                     with_alternative_ts=False, get_stack_kwargs=get_stack_kwargs|{'timestep_name': timestep_name},
                     norm_guide=norm_guide, particle=particle, plot_kwargs=plot_kwargs, weight_by=weight_by,
-                    mark_r200=mark_r200,rescale=rescale)
+                    mark_r200=mark_r200, mark_mass_enclosed=mark_mass_enclosed, mark_radius=mark_radius, rescale=rescale)
         
         if n_panels == 2:
             p.gca().yaxis.tick_right()
@@ -765,14 +837,14 @@ def add_cosmic_mean_flow(tsnum=8, box="L0200N0360_HYDRO_FIDUCIAL", particle=None
 def make_stacked_entropy_image_plot(timestep_name, axis='13', M_min=12.8, M_max=13.2,
                                     vmin=1.7, vmax=3.0, cmap='RdYlBu_r', 
                                     with_colorbar=False, with_quiverkey=False, panel_label=None):
-    mean, err, _, _, _ = get_stack(f'aligned_{axis}_entropy_image', timestep_name=timestep_name, M_min=M_min, M_max=M_max)
+    mean, err, _, _, _ = get_stack(f'aligned_{axis}_entropy_image', timestep_name=timestep_name, M_min=M_min, M_max=M_max, bootstrap=False)
     
     mean*=internal_to_keV_cm2
 
     p.imshow(np.log10(mean), origin='lower', extent=(-2,2,-2,2), vmin=vmin, vmax=vmax, cmap=cmap)
 
-    mean_vx, err, _, _, _ = get_stack(f'aligned_{axis}_vx_image', timestep_name=timestep_name, M_min=M_min, M_max=M_max)
-    mean_vy, err, _, _, _ = get_stack(f'aligned_{axis}_vy_image', timestep_name=timestep_name, M_min=M_min, M_max=M_max)
+    mean_vx, err, _, _, _ = get_stack(f'aligned_{axis}_vx_image', timestep_name=timestep_name, M_min=M_min, M_max=M_max, bootstrap=False)
+    mean_vy, err, _, _, _ = get_stack(f'aligned_{axis}_vy_image', timestep_name=timestep_name, M_min=M_min, M_max=M_max, bootstrap=False)
     axis_names = {'1': 'z', '2': 'y', '3': 'x'}
     axis_name_x = axis_names[axis[1]]
     axis_name_y = axis_names[axis[0]]
@@ -787,8 +859,8 @@ def make_stacked_entropy_image_plot(timestep_name, axis='13', M_min=12.8, M_max=
 
     ax = p.gca()
     for scale in [1.0, 2.0]:
-        ax.add_patch(p.Circle((0, 0), scale, fill=False, color='grey', 
-                                linewidth=2))
+        ax.add_patch(p.Circle((0, 0), scale, fill=False, color='black', 
+                                linewidth=1))
 
     p.xticks([-1.5, -1.0, -0.5, 0.0, 0.5, 1.0, 1.5], 
              ["$-1.5$", "$-1.0$", "$-0.5$", "$0.0$", "$0.5$", "$1.0$", "$1.5$"])
@@ -851,6 +923,7 @@ def make_stacked_vr_plot(timestep_name, axis='13', M_min=12.8, M_max=13.2,
         vr_all.append(vr_i)
 
     vr_array = np.array(vr_all)
+    
 
     axis_names = {'1': 'z', '2': 'y', '3': 'x'}
     axis_name_x = axis_names[axis[1]]
@@ -863,7 +936,8 @@ def make_stacked_vr_plot(timestep_name, axis='13', M_min=12.8, M_max=13.2,
         lower_p, upper_p = stack_mode
         vr_lower = np.nanpercentile(vr_array, lower_p, axis=0)
         vr_upper = np.nanpercentile(vr_array, upper_p, axis=0)
-        vr = np.nanmedian(vr_array, axis=0)
+        vr = np.nanmean(vr_array, axis=0)
+        print(f"vr mean range: {vr.max():.1f} to {vr.min():.1f} km/s")
         main_line = p.plot(phi, vr, **plot_kwargs)
         p.fill_between(phi, vr_lower, vr_upper,
                        alpha=0.2, color=main_line[0].get_color(), label='_nolegend_')
