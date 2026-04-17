@@ -114,7 +114,6 @@ class FlamingoInputHandler(tangos.input_handlers.pynbody.Gadget4HDFSubfindInputH
     @classmethod
     def _sim_filename_to_hbt_filename(cls, sim_filename : pathlib.Path) -> pathlib.Path:
         for candidate in cls._sim_filename_to_hbt_filename_candidates(sim_filename):
-            print("Try",candidate)
             if candidate.with_suffix(".0.hdf5").exists() or candidate.with_suffix(".hdf5").exists():
                 return candidate
         raise ValueError(f"Could not find HBT+ halo catalogue corresponding to simulation file {sim_filename}")
@@ -407,20 +406,6 @@ class SSFR(LiveHaloProperties):
 
     def requires_property(self):
         return ['InclusiveSphere_30kpc_StarFormationRate', 'InclusiveSphere_30kpc_StellarMass'] + super().requires_property()
-
-
-class RadialVelocityProfile(spherical_region.SphericalRegionPropertyCalculation):
-    names = "gas_vr", "gas_vr_disp"
-
-    @centred_calculation
-    def calculate(self, particle_data: pynbody.snapshot.SimSnap, halo_entry):
-        minrad = 10.0; maxrad = 3000.0
-        pro = pynbody.analysis.profile.Profile(particle_data.gas, type='log', ndim=3,
-                                            min=minrad, max=maxrad, nbins=50,
-                                            weight_by='vol')
-
-        return pro['vr'], pro['vr_disp']
-
     
 def _get_velocity_centre(data, region_sizes=['25 kpc', '50 kpc', '200 kpc']):
     for region_size in region_sizes:
@@ -710,6 +695,23 @@ class FlamingoDensityProfileAbsolute(FlamingoDensityProfileBase):
         return np.log10(self._max_rad/self._min_rad)/self._nbins
     
     
+    
+class FlamingoEnclosedCoolingRateProfile(FlamingoDensityProfileAbsolute):
+    names = "gas_enclosed_cooling_rate", "gas_enclosed_enthalpy"
+
+    @centred_calculation
+    def calculate(self, data, existing_properties):
+        # cooling rate in ergs Myr^-1
+        pro = pynbody.analysis.profile.Profile(data.gas, type='log', ndim=3,
+                                                min=self._min_rad, max=self._max_rad, nbins=self._nbins)
+        
+        return pro['ps20_cooling_cumulative'], pro['enthalpy_cumulative']
+
+
+    def plot_ylabel(self):
+        return r"$\dot{E}_{\rm cool}/{\rm ergs Myr^{-1}}$", r"$H/{\rm ergs}$"
+
+
 class FlamingoDensityFromMassProfileAbsolute(LiveHaloProperties, FlamingoDensityProfileAbsolute):
     particle_name = "gas"
     names = "gas_density_from_mass", 
@@ -801,25 +803,74 @@ class EntropyCoolingRate(LiveHaloProperties, FlamingoDensityProfileRelative):
     def requires_property(self):
         return ['gas_entropy_r200m_relative', 'gas_cooltime_r200m_relative'] + super().requires_property()
 
-class EnthalpyProfileRelative(LiveHaloProperties, FlamingoDensityProfileRelative):
-    names = "gas_enthalpy_inflow_r200m_relative", "gas_enthalpy_outflow_r200m_relative"
+class EnthalpyProfile(LiveHaloProperties):
+    names = "_",
 
     def requires_property(self):
-        return ['gas_energy_inflow_r200m_relative', 'gas_mdot_inflow_r200m_relative', 'gas_temp_inflow_r200m_relative',
-                'gas_energy_outflow_r200m_relative', 'gas_mdot_outflow_r200m_relative', 'gas_temp_outflow_r200m_relative'] + super().requires_property()
+        names = ['gas_energy_inflow', 'gas_mdot_inflow', 'gas_temp_inflow', 
+                 'gas_energy_outflow', 'gas_mdot_outflow', 'gas_temp_outflow']
+        if self._is_relative:
+            names = [n+"_r200m_relative" for n in names]
+        return names + super().requires_property()
     
     def calculate(self, data, existing_properties):
         # factor is k / (mu * m_p) where mu = 0.59
         factor = (pynbody.units.k / (0.59 * pynbody.units.m_p)).in_units("erg Msol^-1 K^-1") * 1e6 # per yr -> per Myr
-        enthalpy_inflow = existing_properties['gas_energy_inflow_r200m_relative'] + \
-             factor * existing_properties['gas_temp_inflow_r200m_relative'] * existing_properties['gas_mdot_inflow_r200m_relative']
-        enthalpy_outflow = existing_properties['gas_energy_outflow_r200m_relative'] + \
-             factor * existing_properties['gas_temp_outflow_r200m_relative'] * existing_properties['gas_mdot_outflow_r200m_relative']
+
+        post = "_r200m_relative" if self._is_relative else ""
+        enthalpy_inflow = existing_properties['gas_energy_inflow' + post] - \
+             factor * existing_properties['gas_temp_inflow' + post] * existing_properties['gas_mdot_inflow' + post]
+        enthalpy_outflow = existing_properties['gas_energy_outflow' + post] + \
+             factor * existing_properties['gas_temp_outflow' + post] * existing_properties['gas_mdot_outflow' + post]
         return enthalpy_inflow, enthalpy_outflow
     
     def plot_ylabel(self):
         return r"Enthalpy flow/$_{\rm inflow}/erg Myr^{-1}$", r"Enthalpy flow/$_{\rm outflow}/erg Myr^{-1}$"
     
+class EnthalpyProfileRelative(EnthalpyProfile, FlamingoDensityProfileRelative):
+    names = "gas_enthalpy_inflow_r200m_relative", "gas_enthalpy_outflow_r200m_relative"
+    _is_relative = True 
+
+class EnthalpyProfileAbsolute(EnthalpyProfile, FlamingoDensityProfileAbsolute):
+    names = "gas_enthalpy_inflow", "gas_enthalpy_outflow"
+    _is_relative = False
+
+class GravitationalHeatingRate(LiveHaloProperties, FlamingoDensityProfileAbsolute):
+    names = "gas_gravitational_heating_enclosed", "gas_pressure_heating_enclosed", "gas_net_heating_enclosed"
+
+    conv_ratio_grav_term = pynbody.units.Unit("G Msol^2 yr^-1 kpc^-1").in_units("erg Myr^-1")
+    conv_ratio_pressure_term = pynbody.units.Unit("Msol km^3 s^-3 kpc^-1").in_units("erg Myr^-1")
+
+    def calculate(self, _, existing_properties):
+        net_mdot = existing_properties['gas_mdot_inflow'] + existing_properties['gas_mdot_outflow']
+        net_mdot[np.isnan(net_mdot)] = 0.0 # handle zero mdot cases, which would otherwise cause issues below
+
+        mass_cumulative = existing_properties['all_mass_enclosed']
+        mass_cumulative_mid_shell = (mass_cumulative + np.concatenate(([0], mass_cumulative[:-1]))) / 2
+
+        r = np.logspace(np.log10(self._min_rad), np.log10(self._max_rad), self._nbins + 1) # kpc
+        r_central = np.sqrt(r[:-1]*r[1:]) # geometric mean radius of each shell
+        dr = np.diff(r) 
+
+        # 1e6 below converts from yr^-1 (mdot properties stored this way) to Myr^-1 (energy properties)
+        per_shell_grav = (self.conv_ratio_grav_term * net_mdot * mass_cumulative_mid_shell * dr / r_central**2).view(np.ndarray)
+        
+
+        pressure = existing_properties['gas_p']
+        d_pressure_dr = np.gradient(pressure, r_central)
+        vr = existing_properties['gas_vr'] 
+
+        per_shell_pressure = (4*np.pi * r_central**2 * dr * (vr * d_pressure_dr) * self.conv_ratio_pressure_term).view(np.ndarray)
+
+        enclosed = ((per_shell_pressure-per_shell_grav )).cumsum()
+        
+
+        return per_shell_grav.cumsum(), per_shell_pressure.cumsum(), enclosed
+    
+    def requires_property(self):
+        return ['all_mass_enclosed', 'gas_mdot_inflow', 'gas_mdot_outflow', 'gas_density', 'gas_p', 'gas_vr']
+
+
 class ShellFlippedMdot(LiveHaloProperties, FlamingoDensityProfileRelative):
     names = 'dm_mdot_alt_r200m_relative',
 
@@ -834,6 +885,34 @@ class ShellFlippedMdot(LiveHaloProperties, FlamingoDensityProfileRelative):
     
     def plot_ylabel(self):
         return r"Alt DM Mdot",
+
+class AGNEnergyRate(LiveHaloProperties):
+    names = "agn_energy_rate",
+
+    _soap_mass_rate_unit = pynbody.units.Unit("1.988e43 g") / pynbody.units.Unit("3.086e19 s")
+    _energy_per_mass_unit = pynbody.units.Unit("0.015 c^2") # efficiency factor
+
+    _soap_mass_rate_to_ergs_per_myr = (_soap_mass_rate_unit * _energy_per_mass_unit).in_units("erg Myr^-1")
+
+    def calculate(self, _, existing_properties):
+        return existing_properties['InclusiveSphere_30kpc_MostMassiveBlackHoleAccretionRate'] * self._soap_mass_rate_to_ergs_per_myr, 
+
+    def requires_property(self):
+        return ['InclusiveSphere_30kpc_MostMassiveBlackHoleAccretionRate']
+
+class SNEnergyRate(LiveHaloProperties):
+    names = "sne_energy_rate",
+    _soap_mass_rate_unit = pynbody.units.Unit("1.988e43 g") / pynbody.units.Unit("3.086e19 s")
+    _energy_per_mass_unit = pynbody.units.Unit("1.18e49 erg Msol^-1") # Schaye 23, 2.3.4 
+    _fSN = 0.238 # alert! should change this for different sims, this is for fiducial m9
+
+    _soap_mass_rate_to_ergs_per_myr = (_soap_mass_rate_unit * _energy_per_mass_unit).in_units("erg Myr^-1")
+
+    def calculate(self, _, existing_properties):
+        return existing_properties['InclusiveSphere_30kpc_StarFormationRate'] * self._soap_mass_rate_to_ergs_per_myr, 
+    
+    def requires_property(self):
+        return ['InclusiveSphere_30kpc_StarFormationRate']
 
 class RelativeInflowEquivalentRate(LiveHaloProperties, FlamingoDensityProfileRelative):
     names = "gas_inflow_equivalent_rate_r200m_relative",
@@ -914,6 +993,34 @@ class FlamingoPrimordialBaryonicMassDeficit(spherical_region.SphericalRegionHalo
     
 
 
+@pynbody.analysis.profile.Profile.profile_property
+def ps20_cooling(profile: pynbody.analysis.profile.Profile):
+    sim = profile.sim 
+    cooling_erg_per_s_per_particle = (sim['ps20_cooling_rate']*sim['mass']).in_units('erg Myr^-1')
+    cooling_erg_per_s_per_bin = pynbody.array.SimArray(np.zeros(profile.nbins), 'erg Myr^-1')
+    nH = sim['rho'].in_units('m_p cm^-3')*0.76 # num hydrogens per cm^3, assuming primordial composition
+    temp_floor = 8000.*(nH/0.1)**0.333333 # Schaye eq 1.
+    temp_floor.units="K"
+    mask = sim['temp'] > 1e5 
+    cooling_erg_per_s_per_particle*=mask
+
+    for i in range(profile.nbins):
+        cooling_erg_per_s_per_bin[i] = cooling_erg_per_s_per_particle[profile.binind[i]].sum()
+
+    return cooling_erg_per_s_per_bin.in_units('erg Myr^-1')
+
+@pynbody.analysis.profile.Profile.profile_property
+def ps20_cooling_cumulative(profile: pynbody.analysis.profile.Profile):
+    cooling_rate = profile['ps20_cooling']
+    cumulative_cooling = np.cumsum(cooling_rate)
+    return cumulative_cooling
+
+@pynbody.analysis.profile.Profile.profile_property
+def enthalpy_cumulative(profile: pynbody.analysis.profile.Profile):
+    sim = profile.sim
+    enthalpy_per_particle = (5./3.) * (sim['u'] * sim['mass']).in_units('erg')
+    enthalpy_per_bin = np.array([enthalpy_per_particle[profile.binind[i]].sum() for i in range(profile.nbins)])
+    return enthalpy_per_bin.cumsum()
 
 @pynbody.analysis.profile.Profile.profile_property
 def mdot(profile: pynbody.analysis.profile.Profile):

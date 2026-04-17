@@ -100,15 +100,15 @@ class PloeckingerSchayeCoolingRate:
     def __call__(self, redshift, temp_K, metallicity_Zsun, nH_cm3):
         metallicity_Zsun = np.maximum(metallicity_Zsun, 1e-10) 
         cooling = 10.**self._cooling_interpolator((redshift, np.log10(temp_K), np.log10(metallicity_Zsun), np.log10(nH_cm3)))
-        heating = 10.**self._heating_interpolator((redshift, np.log10(temp_K), np.log10(metallicity_Zsun), np.log10(nH_cm3)))
-        return cooling - heating # erg cm^3 s^-1
+        #heating = 10.**self._heating_interpolator((redshift, np.log10(temp_K), np.log10(metallicity_Zsun), np.log10(nH_cm3)))
+        return cooling #- heating # erg cm^3 s^-1
     
     def internal_energy(self, redshift, temp_K, metallicity_Zsun, nH_cm3):
         metallicity_Zsun = np.maximum(metallicity_Zsun, 1e-10) 
         return 10.**self._u_interpolator((redshift, np.log10(temp_K), np.log10(metallicity_Zsun), np.log10(nH_cm3))) # erg g^-1
 
     
-@pynbody.snapshot.swift.SwiftSnap.derived_quantity
+@pynbody.snapshot.simsnap.SimSnap.derived_quantity
 def ps20_cooling_rate(snap):
     cooling_rate = PloeckingerSchayeCoolingRate()
     redshift = snap.properties['z']
@@ -118,6 +118,19 @@ def ps20_cooling_rate(snap):
     # cooling_rate is in erg cm^3 s^-1, multiplying by nH_cm3^2 gives erg cm^-3 s^-1, but then divide by nH_cm3 * X_H / m_H to give erg g^-1 s^-1
     result = (cooling_rate(redshift, temp_K, metallicity_Zsun, nH_cm3)) * nH_cm3 * X_H / m_H
     return pynbody.array.SimArray(result, "erg g^-1 s^-1")
+
+@pynbody.snapshot.simsnap.SimSnap.derived_quantity
+def approx_cooling_rate(snap):
+    n_e = snap.gas['rho'].in_units('m_p cm^-3') * (X_H) # electrons per cm^3, assuming fully ionised H and He
+    temp_K = snap.gas['temp'].in_units("K")
+
+    Lambda_approx = 1e-27 * np.sqrt(temp_K) * n_e**2 # erg cm^-3 s^-1
+
+    print(n_e,Lambda_approx, snap.gas['rho'].in_units('g cm^-3'))
+    result = Lambda_approx.astype(np.float64) / (snap.gas['rho'].in_units('g cm^-3')) # erg g^-1 s^-1
+    print(result)
+    return pynbody.array.SimArray(result, "erg g^-1 s^-1")
+
 
 @pynbody.snapshot.swift.SwiftSnap.derived_quantity
 def ps20_cooling_time(snap):
