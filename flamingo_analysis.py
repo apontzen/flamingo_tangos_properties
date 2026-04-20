@@ -55,16 +55,18 @@ def get_xs(ts, property_name, profile):
         property_name = property_name[:-2]
     try:
         prop = db.properties.providing_class(property_name, ft.FlamingoInputHandler)(ts.simulation)
-        xs = prop.plot_x_values(profile)
-        return xs 
     except:
-        print(f"Error in get_xs for {property_name}, using default log10 r from 0.01 to 3.0")
-        num_bins = len(profile)
-        return np.linspace(np.log10(0.01), np.log10(3.0), num_bins)
+        print(f"Warning: getting x values for {property_name} failed, defaulting to FlamingoDensityProfileAbsolute")
+        prop = ft.FlamingoDensityProfileAbsolute(ts.simulation)
+    xs = prop.plot_x_values(profile)
+    return xs 
+    
+        
     
 def get_stack(property_name, M_min, M_max, M_name='M200m()', cut=None, earlier=None,
-            use_log=False, timestep_name="L0200%HYDRO%/%8%",
+              use_log=False, timestep_name="L0200%HYDRO%/%8%",
               use_percentile=None,weight_by=None,bootstrap=True):
+    
     ts = db.get_timestep(timestep_name)
 
     if cut is not None:
@@ -134,13 +136,15 @@ def get_stack(property_name, M_min, M_max, M_name='M200m()', cut=None, earlier=N
         err_profile = mean_profile/np.sqrt(num_included)
     else:
         if bootstrap:
-            mean_profile, err_profile = _get_mean_of_profiles_with_bootstrap(profiles, weights, mask)
+            mean_profile, err_profile_min, err_profile_max = _get_mean_of_profiles_with_bootstrap(profiles, weights, mask)
         else:
             mean_profile, err_profile = _get_mean_of_profiles(profiles, weights, use_log, mask)
+            err_profile_min = mean_profile - err_profile
+            err_profile_max = mean_profile + err_profile
 
     xs = get_xs(ts, property_name, mean_profile)
     labels = None
-    return mean_profile, err_profile, xs, labels, r200[mask].mean()
+    return mean_profile, err_profile_min, err_profile_max, xs, labels, r200[mask].mean()
 
 def _get_mean_of_profiles(profiles, weights, use_log, mask):
     log_profiles = []
@@ -185,9 +189,9 @@ def _get_mean_of_profiles_with_bootstrap(profiles, weights, mask, n_bootstrap=10
         weighted_mean(p_masked[idx], w_masked[idx])
         for idx in (rng.integers(0, n, size=n) for _ in range(n_bootstrap))
     ])
-    err_profile = np.nanstd(bootstrap_means, axis=0)
+    err_profile = np.nanpercentile(bootstrap_means, [16, 84], axis=0)
 
-    return mean_profile, err_profile
+    return mean_profile, err_profile[0], err_profile[1]
 
 
 def legend(labels, **kwargs):
@@ -332,9 +336,9 @@ def plot_temp_guide():
 def make_binned_by_mass_plot(property_name, weight_property_name = None, 
                              bin_name='M200m()', num_bins=15, bin_range=(12.5, 14.5),
                              ts_name=r"%FIDUCIAL/%8%", plot_kwargs={},
-                             error_range: str | tuple ='uncertainty',
+                             error_range: str | tuple ='uncertainty-bootstrap',
                              mask_property_name = None, mask_property_value = None,
-                             use_band = False, with_fit=False, fit_range=None,
+                             use_band = True, with_fit=False, fit_range=None,
                              x_offset=0.0):
     bin_centers, binned_means, binned_range_positive, binned_range_negative = _get_binned_statistics(property_name, weight_property_name, mask_property_name, mask_property_value, bin_name, num_bins, bin_range, ts_name, error_range)
 
@@ -454,6 +458,10 @@ def _get_binned_statistics(property_name, weight_property_name, mask_property_na
                     variance = np.nanstd(property[bin_mask]/weights[bin_mask])**2 / bin_mask.sum()
                     binned_range_positive.append(np.sqrt(variance))
                     binned_range_negative.append(np.sqrt(variance))
+                case 'uncertainty-bootstrap':
+                    _, err_min, err_max = _get_mean_of_profiles_with_bootstrap(property/weights, weights, bin_mask)
+                    binned_range_positive.append(err_max - binned_means[-1])
+                    binned_range_negative.append(binned_means[-1] - err_min)
                 case (lower_percentile, upper_percentile):
                     lower = np.nanpercentile(property[bin_mask]/weights[bin_mask], lower_percentile)
                     upper = np.nanpercentile(property[bin_mask]/weights[bin_mask], upper_percentile)
@@ -494,25 +502,33 @@ def make_plot(name='rho', M_min=12.5, M_max=13.0,
     else:
         prop_name = name
 
-    prop_name = f'{particle}_{prop_name}'
-    weight_by = None if weight_by is None else f'{particle}_{weight_by}'
-
     if is_function:
         prop_name += '()'
+
+    if particle == 'ratio':
+        prop_name = f'gas_{prop_name}/all_{prop_name}'
+    else:
+        prop_name = f'{particle}_{prop_name}'
+
+    weight_by = None if weight_by is None else f'{particle}_{weight_by}'
+   
     
     try:
-        profile, uncertainty, xs, labels, log10_r200 = get_stack(prop_name, M_min, M_max, **(get_stack_kwargs | {'weight_by': weight_by}))
+        profile, profile_min, profile_max, xs, labels, log10_r200 = get_stack(prop_name, M_min, M_max, **(get_stack_kwargs | {'weight_by': weight_by}))
     except NoHalosInStackError:
         print(f"No halos in stack for {(M_min, M_max)}")
         return 
 
     profile*=rescale
-    uncertainty*=rescale
+    profile_min*=rescale
+    profile_max*=rescale
 
     r = 10**xs
 
     if (profile<=0).all():
         profile = -profile
+        profile_min = -profile_min
+        profile_max = -profile_max
 
     if M_max < 100:
         label = fr"$10^{{{M_min}}} - 10^{{{M_max}}}\,{{\rm M}}_{{\odot}}$"
@@ -543,7 +559,7 @@ def make_plot(name='rho', M_min=12.5, M_max=13.0,
         mark_is_at = mark_radius/10.**(log10_r200)
         p.plot(mark_is_at, interp_func(mark_is_at), 'x', color=main_line[0].get_color())
         
-    p.fill_between(r, profile-uncertainty, profile+uncertainty, alpha=0.2, color=main_line[0].get_color(), label='_nolegend_')
+    p.fill_between(r, profile_min, profile_max, alpha=0.2, color=main_line[0].get_color(), label='_nolegend_')
 
     if name == 'vr':
         p.semilogx()
@@ -576,10 +592,10 @@ def make_histogram(histogram_property, tsnum=8, box="L0200N0720_HYDRO_FIDUCIAL")
     p.ylabel("Number of halos")
 
 def make_profile_plots(v, tsnum=8, box="L0200N0720_HYDRO_FIDUCIAL", 
-                       newfig=True, with_exclusive=False, norm_guide=False, weight_by=None,
+                       newfig=True, weight_by=None,
                        particle='gas', plot_kwargs={}, get_stack_kwargs={}, ranges_override=None,
                        panels=('relative','absolute'), with_legend=True, rescale=1.0,
-                       mark_r200=False, mark_mass_enclosed=None, mark_radius=None):
+                       mark_r200=False, mark_radius=None):
     global ranges, mass_name 
     if ranges_override is None:
         ranges_override = ranges
@@ -609,12 +625,10 @@ def make_profile_plots(v, tsnum=8, box="L0200N0720_HYDRO_FIDUCIAL",
         p.title(f"Relative radius profiles ({redshift_label})")
         p.gca().set_prop_cycle(None)
         for i, ra in enumerate(ranges_override):
-            with_guide = i == 3 and v in plot_guides_for
-            make_plot(v, ra[0], ra[1], with_guide=with_guide, with_exclusive=with_exclusive, relative=True,
-                      with_alternative_ts=False, 
+            make_plot(v, ra[0], ra[1], relative=True,
                       get_stack_kwargs=get_stack_kwargs | {'timestep_name': timestep_name},
-                      norm_guide=norm_guide, particle=particle, plot_kwargs=plot_kwargs, weight_by=weight_by,
-                      mark_r200=mark_r200, mark_mass_enclosed=mark_mass_enclosed, mark_radius=mark_radius, 
+                      particle=particle, plot_kwargs=plot_kwargs, weight_by=weight_by,
+                      mark_r200=mark_r200, mark_radius=mark_radius, 
                       rescale=rescale)
         
         if newfig and with_legend:
@@ -628,11 +642,10 @@ def make_profile_plots(v, tsnum=8, box="L0200N0720_HYDRO_FIDUCIAL",
         p.title(f"Absolute radius profiles ({redshift_label})")
         p.gca().set_prop_cycle(None)
         for i, ra in enumerate(ranges_override):
-            with_guide = i == 3 and v in plot_guides_for
-            make_plot(v, ra[0], ra[1], with_guide=with_guide, with_exclusive=with_exclusive, relative=False,
-                    with_alternative_ts=False, get_stack_kwargs=get_stack_kwargs|{'timestep_name': timestep_name},
-                    norm_guide=norm_guide, particle=particle, plot_kwargs=plot_kwargs, weight_by=weight_by,
-                    mark_r200=mark_r200, mark_mass_enclosed=mark_mass_enclosed, mark_radius=mark_radius, rescale=rescale)
+            make_plot(v, ra[0], ra[1], relative=False,
+                    get_stack_kwargs=get_stack_kwargs|{'timestep_name': timestep_name},
+                    particle=particle, plot_kwargs=plot_kwargs, weight_by=weight_by,
+                    mark_r200=mark_r200, mark_radius=mark_radius, rescale=rescale)
         
         if n_panels == 2:
             p.gca().yaxis.tick_right()
