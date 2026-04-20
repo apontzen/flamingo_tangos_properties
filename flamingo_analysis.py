@@ -48,6 +48,9 @@ def get_vr_on_circle(vx, vy, radius, n_bins):
     return phi, vr
 
 def get_xs(ts, property_name, profile):
+    """Get x values for plotting a profile of the given property. 
+    
+    If the property provides its own x values, use those; otherwise, default to log10(r) from 0.01 to 3.0."""
     if property_name.endswith("()"):
         property_name = property_name[:-2]
     try:
@@ -58,18 +61,6 @@ def get_xs(ts, property_name, profile):
         print(f"Error in get_xs for {property_name}, using default log10 r from 0.01 to 3.0")
         num_bins = len(profile)
         return np.linspace(np.log10(0.01), np.log10(3.0), num_bins)
-    
-def get_labels(ts, property_name):
-    if property_name.endswith("()"):
-        property_name = property_name[:-2]
-    try:
-        prop = db.properties.providing_class(property_name, ft.FlamingoInputHandler)(ts.simulation)
-        ylabs = prop.plot_ylabel()
-        xlab = prop.plot_xlabel()
-        return xlab, ylabs[prop.index_of_name(property_name)]
-    except Exception as e:
-        print(f"Error in get_labels for {property_name}: {e}")
-        return "?", "?"
     
 def get_stack(property_name, M_min, M_max, M_name='M200m()', cut=None, earlier=None,
             use_log=False, timestep_name="L0200%HYDRO%/%8%",
@@ -148,7 +139,7 @@ def get_stack(property_name, M_min, M_max, M_name='M200m()', cut=None, earlier=N
             mean_profile, err_profile = _get_mean_of_profiles(profiles, weights, use_log, mask)
 
     xs = get_xs(ts, property_name, mean_profile)
-    labels = get_labels(ts, property_name)
+    labels = None
     return mean_profile, err_profile, xs, labels, r200[mask].mean()
 
 def _get_mean_of_profiles(profiles, weights, use_log, mask):
@@ -198,39 +189,6 @@ def _get_mean_of_profiles_with_bootstrap(profiles, weights, mask, n_bootstrap=10
 
     return mean_profile, err_profile
 
-
-
-def make_flow_ratio_plot(prop_name = 'gas_mdot_inflow', M_min=12.5, M_max=13.0, box1="L0200N0360_HYDRO_STRONGEST_AGN", box2="L0200N0360_HYDRO_WEAK_AGN", tsnum=1):
-    try:
-        profile1, uncertainty1, xs, labels, _ = get_stack(prop_name, M_min, M_max, timestep_name=f"{box1}/%{tsnum}.hdf5")
-        profile2, uncertainty2, _, _, _ = get_stack(prop_name, M_min, M_max, timestep_name=f"{box2}/%{tsnum}.hdf5")
-    except NoHalosInStackError:
-        print(f"No halos in stack for {(M_min, M_max)}")
-        return 
-    
-    r = 10**xs
-
-    if 'inflow' in prop_name:
-        ratio_profile = profile2 - profile1
-    else:
-        ratio_profile = profile1 - profile2
-    ratio_uncertainty = ratio_profile * np.sqrt((uncertainty1/profile1)**2 + (uncertainty2/profile2)**2)
-    
-    if M_max < 100:
-        label = f"$10^{{{M_min}}} - 10^{{{M_max}}}$"
-    else:
-        label = f"$>10^{{{M_min}}}$"
-    p.plot(r, ratio_profile, label=label)
-    p.fill_between(r, ratio_profile - ratio_uncertainty, ratio_profile + ratio_uncertainty, alpha=0.2)
-    p.xlabel(labels[0])
-    p.ylabel(labels[1])
-
-def make_flow_ratio_plots(prop_name = 'gas_mdot_inflow', tsnum=1):
-    p.figure(figsize=(8, 6))
-    for ra in ranges:
-        make_flow_ratio_plot(M_min=ra[0], M_max=ra[1], prop_name=prop_name, tsnum=tsnum)
-    p.title("Inflow Ratio Profile")
-    p.legend()
 
 def legend(labels, **kwargs):
     from matplotlib.legend import _get_legend_handles
@@ -376,7 +334,7 @@ def make_binned_by_mass_plot(property_name, weight_property_name = None,
                              ts_name=r"%FIDUCIAL/%8%", plot_kwargs={},
                              error_range: str | tuple ='uncertainty',
                              mask_property_name = None, mask_property_value = None,
-                             use_band = False, with_fit=False,
+                             use_band = False, with_fit=False, fit_range=None,
                              x_offset=0.0):
     bin_centers, binned_means, binned_range_positive, binned_range_negative = _get_binned_statistics(property_name, weight_property_name, mask_property_name, mask_property_value, bin_name, num_bins, bin_range, ts_name, error_range)
 
@@ -395,6 +353,9 @@ def make_binned_by_mass_plot(property_name, weight_property_name = None,
         from scipy.optimize import curve_fit
         log_binned_means = np.log10(binned_means)
         valid = np.isfinite(log_binned_means) & np.isfinite(bin_centers)
+        if fit_range:
+            valid *= bin_centers > fit_range[0]
+            valid *= bin_centers < fit_range[1]
         popt, _ = curve_fit(power_law_model, bin_centers[valid], log_binned_means[valid])
         fit_line = 10**power_law_model(bin_centers, *popt)
         p.plot(bin_centers, fit_line, linestyle='--', color=plot_kwargs.get('color', 'black'), label=plot_kwargs.get('label', None) + ' fit' if plot_kwargs.get('label', None) else None)
@@ -511,13 +472,13 @@ def _get_binned_statistics(property_name, weight_property_name, mask_property_na
     binned_range_negative = np.array(binned_range_negative)
     return bin_centers,binned_means,binned_range_positive,binned_range_negative
 
-def make_plot(name='rho', M_min=12.5, M_max=13.0, with_guide=False,
-              relative=True, exclusive=False, with_exclusive=False,
+def make_plot(name='rho', M_min=12.5, M_max=13.0, 
+              relative=True,
               weight_by = None, rescale=1.0,
-              with_alternative_ts=None, particle='gas',
+              particle='gas',
               get_stack_kwargs={}, 
-              plot_kwargs={}, norm_guide=False,
-              mark_r200=False, mark_mass_enclosed=None, mark_radius=None):
+              plot_kwargs={}, 
+              mark_r200=False, mark_radius=None):
     
     if name.endswith("()"):
         is_function = True
@@ -533,59 +494,23 @@ def make_plot(name='rho', M_min=12.5, M_max=13.0, with_guide=False,
     else:
         prop_name = name
 
-    if exclusive:
-        prop_name += "_exclusive"
-        if weight_by is not None:
-            weight_by += '_exclusive'
+    prop_name = f'{particle}_{prop_name}'
+    weight_by = None if weight_by is None else f'{particle}_{weight_by}'
 
+    if is_function:
+        prop_name += '()'
     
-    if particle == 'ratio':
-        # Create gas and all property names
-        gas_prop_name = f'gas_{prop_name}'
-        all_prop_name = f'all_{prop_name}'
-
-        if is_function:
-            all_prop_name += '()'
-            gas_prop_name += '()'
-
-        try:
-            gas_profile, gas_uncertainty, xs, labels, log10_r200 = get_stack(gas_prop_name, M_min, M_max, **(get_stack_kwargs | {'weight_by': weight_by}))
-            all_profile, all_uncertainty, _, _, log10_r200 = get_stack(all_prop_name, M_min, M_max, **(get_stack_kwargs | {'weight_by': weight_by}))
-        except NoHalosInStackError:
-            print(f"No halos in stack for {(M_min, M_max)}")
-            return 
-        
-        # Calculate ratio
-        profile = gas_profile / all_profile
-        # Propagate uncertainty (assuming independent errors)
-        uncertainty = profile * np.sqrt((gas_uncertainty/gas_profile)**2 + (all_uncertainty/all_profile)**2)
-        
-    else:
-        prop_name = f'{particle}_{prop_name}'
-        weight_by = None if weight_by is None else f'{particle}_{weight_by}'
-
-        if is_function:
-            prop_name += '()'
-        
-        try:
-            profile, uncertainty, xs, labels, log10_r200 = get_stack(prop_name, M_min, M_max, **(get_stack_kwargs | {'weight_by': weight_by}))
-        except NoHalosInStackError:
-            print(f"No halos in stack for {(M_min, M_max)}")
-            return 
+    try:
+        profile, uncertainty, xs, labels, log10_r200 = get_stack(prop_name, M_min, M_max, **(get_stack_kwargs | {'weight_by': weight_by}))
+    except NoHalosInStackError:
+        print(f"No halos in stack for {(M_min, M_max)}")
+        return 
 
     profile*=rescale
     uncertainty*=rescale
 
     r = 10**xs
 
-    if norm_guide:
-        if name == 'entropy':
-            pro_ks = (r)**(1.1)
-        else:
-            pro_ks = (r)**-2
-        profile/=pro_ks
-        uncertainty /= pro_ks
-    
     if (profile<=0).all():
         profile = -profile
 
@@ -620,20 +545,6 @@ def make_plot(name='rho', M_min=12.5, M_max=13.0, with_guide=False,
         
     p.fill_between(r, profile-uncertainty, profile+uncertainty, alpha=0.2, color=main_line[0].get_color(), label='_nolegend_')
 
-    if mark_mass_enclosed is not None:
-        mass_enc_prop = f'{particle}_mass_enclosed'
-        if relative:
-            mass_enc_prop += '_r200m_relative'
-
-        profile_mass, _, xs, _, _ = get_stack(mass_enc_prop, M_min, M_max, **get_stack_kwargs)
-        r_mass_enc = 10**xs
-        from scipy.interpolate import interp1d
-        interp_func = interp1d(profile_mass, r_mass_enc, bounds_error=True)
-        r_enc = interp_func(mark_mass_enclosed)
-        
-        interp_func = interp1d(r, profile, bounds_error=True)
-        p.plot(r_enc, interp_func(r_enc), 'x', color=main_line[0].get_color())
-
     if name == 'vr':
         p.semilogx()
     else:
@@ -642,43 +553,6 @@ def make_plot(name='rho', M_min=12.5, M_max=13.0, with_guide=False,
     if name == 'mdot':
         p.ylim(bottom=10.0)
 
-    
-    
-    if with_guide and not norm_guide:
-        if name == 'entropy':
-            pro_ks = profile[-10] * (r/r[-10])**(1.1)
-            p.plot(r, pro_ks, ':', color='grey', label=r"$\propto r^{1.1}$")
-        else:
-            pro_rm2 = profile[-10] * (r/r[-10])**-2
-            p.plot(r, pro_rm2, ':', color='grey', label=r"$\propto r^{-2}$")
-    
-    xlabel, ylabel = labels
-
-    p.xlabel(xlabel)
-
-    if norm_guide:
-        ylabel = f"$r^{2}$\\, {ylabel}$"
-    p.ylabel(ylabel)
-
-
-    if with_exclusive:
-        make_plot(name,M_min,M_max,False,relative,True,
-                  plot_kwargs={'color': main_line[0].get_color(),
-                               'linestyle': '--', 
-                               'label': None},
-                  get_stack_kwargs=get_stack_kwargs,
-                  norm_guide=norm_guide,
-                  particle=particle)
-    
-    if with_alternative_ts:
-        make_plot(name, M_min, M_max, False, relative, exclusive,
-                  plot_kwargs={'color': main_line[0].get_color(),
-                               'alpha': 0.2,
-                               'label': None},
-                  get_stack_kwargs= {"timestep_name": "L0100%/%8%"} | get_stack_kwargs,
-                  norm_guide=norm_guide,
-                  particle=particle
-                  )
 
 #ranges = [(11.8, 12.2), (12.6, 13.0), (13.0, 13.5), (13.5, 14.0), (14.0, 15.0)]
 ranges = [(12.5, 13.0), (13.0, 13.5), (13.5, 14.0), (14.0, np.inf)][::-1]
@@ -837,14 +711,14 @@ def add_cosmic_mean_flow(tsnum=8, box="L0200N0360_HYDRO_FIDUCIAL", particle=None
 def make_stacked_entropy_image_plot(timestep_name, axis='13', M_min=12.8, M_max=13.2,
                                     vmin=1.7, vmax=3.0, cmap='RdYlBu_r', 
                                     with_colorbar=False, with_quiverkey=False, panel_label=None):
-    mean, err, _, _, _ = get_stack(f'aligned_{axis}_entropy_image', timestep_name=timestep_name, M_min=M_min, M_max=M_max, bootstrap=False)
+    mean, _, _, _, _ = get_stack(f'aligned_{axis}_entropy_image', timestep_name=timestep_name, M_min=M_min, M_max=M_max, bootstrap=False)
     
     mean*=internal_to_keV_cm2
 
     p.imshow(np.log10(mean), origin='lower', extent=(-2,2,-2,2), vmin=vmin, vmax=vmax, cmap=cmap)
 
-    mean_vx, err, _, _, _ = get_stack(f'aligned_{axis}_vx_image', timestep_name=timestep_name, M_min=M_min, M_max=M_max, bootstrap=False)
-    mean_vy, err, _, _, _ = get_stack(f'aligned_{axis}_vy_image', timestep_name=timestep_name, M_min=M_min, M_max=M_max, bootstrap=False)
+    mean_vx, _, _, _, _ = get_stack(f'aligned_{axis}_vx_image', timestep_name=timestep_name, M_min=M_min, M_max=M_max, bootstrap=False)
+    mean_vy, _, _, _, _ = get_stack(f'aligned_{axis}_vy_image', timestep_name=timestep_name, M_min=M_min, M_max=M_max, bootstrap=False)
     axis_names = {'1': 'z', '2': 'y', '3': 'x'}
     axis_name_x = axis_names[axis[1]]
     axis_name_y = axis_names[axis[0]]

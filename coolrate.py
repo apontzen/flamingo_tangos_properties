@@ -126,9 +126,7 @@ def approx_cooling_rate(snap):
 
     Lambda_approx = 1e-27 * np.sqrt(temp_K) * n_e**2 # erg cm^-3 s^-1
 
-    print(n_e,Lambda_approx, snap.gas['rho'].in_units('g cm^-3'))
     result = Lambda_approx.astype(np.float64) / (snap.gas['rho'].in_units('g cm^-3')) # erg g^-1 s^-1
-    print(result)
     return pynbody.array.SimArray(result, "erg g^-1 s^-1")
 
 
