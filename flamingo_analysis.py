@@ -339,7 +339,7 @@ def make_binned_by_mass_plot(property_name, weight_property_name = None,
                              error_range: str | tuple ='uncertainty-bootstrap',
                              mask_property_name = None, mask_property_value = None,
                              use_band = True, with_fit=False, fit_range=None,
-                             x_offset=0.0):
+                             x_offset=0.0, readoff_values_at=None):
     bin_centers, binned_means, binned_range_positive, binned_range_negative = _get_binned_statistics(property_name, weight_property_name, mask_property_name, mask_property_value, bin_name, num_bins, bin_range, ts_name, error_range)
 
     if use_band:
@@ -349,6 +349,13 @@ def make_binned_by_mass_plot(property_name, weight_property_name = None,
         
     else:
         p.errorbar(bin_centers+x_offset, binned_means, yerr=[binned_range_negative, binned_range_positive], fmt='o', **plot_kwargs)
+
+    if readoff_values_at is not None:
+        readoff_values = np.interp(readoff_values_at, bin_centers, binned_means)
+        readoff_range_positive = np.interp(readoff_values_at, bin_centers, binned_range_positive)
+        readoff_range_negative = np.interp(readoff_values_at, bin_centers, binned_range_negative)
+        for x, y, yerr_pos, yerr_neg in zip(readoff_values_at, readoff_values, readoff_range_positive, readoff_range_negative):
+            print(f"At {bin_name} = 10^{x:.2f}, value = {y:.3e} (+{yerr_pos:.3e}/-{yerr_neg:.3e})")
 
     if with_fit:
         def power_law_model(log_mass, offset, alpha):

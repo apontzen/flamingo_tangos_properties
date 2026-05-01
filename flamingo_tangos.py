@@ -815,9 +815,13 @@ class EnthalpyProfile(LiveHaloProperties):
     
     def calculate(self, data, existing_properties):
         # factor is k / (mu * m_p) where mu = 0.59
-        factor = (pynbody.units.k / (0.59 * pynbody.units.m_p)).in_units("erg Msol^-1 K^-1") * 1e6 # per yr -> per Myr
+        factor = (pynbody.units.k / (0.59 * pynbody.units.m_p)).in_units("erg Msol^-1 K^-1")
+        factor *= 1e6 # convert from yr^-1 to Myr^-1 for consistency with other energy properties
 
         post = "_r200m_relative" if self._is_relative else ""
+
+        # NB temp_inflow is weighted by mass flux, so multiplying by mdot_inflow gives back the pressure part
+        # of the enthalpy flow rate exactly. 
         enthalpy_inflow = existing_properties['gas_energy_inflow' + post] - \
              factor * existing_properties['gas_temp_inflow' + post] * existing_properties['gas_mdot_inflow' + post]
         enthalpy_outflow = existing_properties['gas_energy_outflow' + post] + \
@@ -1038,16 +1042,22 @@ def mdot(profile: pynbody.analysis.profile.Profile):
 
 @pynbody.analysis.profile.Profile.profile_property
 def energy_flux(profile: pynbody.analysis.profile.Profile):
-    # energy flux = integral rho v_r (v^2/2 + 3/2 kT/(mu m_p)) r^2 d omega
-    # estimate in a spherical shell of thickness delta r:
-    # energy flux = integral_r0^(r0+delta r) dr r^2 d omega (rho v_r (v^2/2 + 3/2 kT/(mu m_p))) / delta r
-    #             = integral dV (rho v_r (v^2/2 + 3/2 kT/(mu m_p))) / delta r
-    #             = sum m v_r (v^2/2 + 3/2 kT/(mu m_p)) / delta r
-    #
-    # profile['energy_flow_integrand'] gives mass-weighted mean of v_r (v^2/2 + 3/2 kT/(mu m_p)), while profile['mass'] gives the mass in each shell,
-    # so the product is sum m v_r (v^2/2 + 3/2 kT/(mu m_p)) in each shell.
-    #
-    # Note gravitational energy is neglected here; to include it, see FlamingoFlowEnergyWithPotentialAbsolute
+    """
+    Energy flux = integral rho v_r (v^2/2 + 3/2 kT/(mu m_p)) r^2 d omega
+
+    Estimate in a spherical shell of thickness delta r:
+    energy flux = integral_r0^(r0+delta r) dr r^2 d omega (rho v_r (v^2/2 + 3/2 kT/(mu m_p))) / delta r
+                = integral dV (rho v_r (v^2/2 + 3/2 kT/(mu m_p))) / delta r
+                = sum m v_r (v^2/2 + 3/2 kT/(mu m_p)) / delta r
+    
+    profile['energy_flow_integrand'] gives mass-weighted mean of v_r (v^2/2 + 3/2 kT/(mu m_p)), while profile['mass'] gives the mass in each shell,
+    so the product is sum m v_r (v^2/2 + 3/2 kT/(mu m_p)) in each shell.
+    
+    Note gravitational energy is neglected here; to include it, see FlamingoFlowEnergyWithPotentialAbsolute
+    
+    Also note that this is pure internal energy flux, NOT enthalpy flux. The enthalpy flux is obtained by
+    adding mdot * kT/(mu m_p), as done in EnthalpyProfile.
+    """
     ar = profile['energy_flow_integrand'] * profile['mass'] / np.diff(profile['bin_edges'])
     ar.units = profile['mass'].units * profile['energy_flow_integrand'].units / profile['bin_edges'].units
     return ar.in_units('erg Myr^-1')
