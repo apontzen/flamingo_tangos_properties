@@ -598,6 +598,82 @@ def make_histogram(histogram_property, tsnum=8, box="L0200N0720_HYDRO_FIDUCIAL")
     p.xlabel(histogram_property)
     p.ylabel("Number of halos")
 
+def tabulate_profile_plot_data(v, tsnum=8, box="L0200N0720_HYDRO_FIDUCIAL",
+                                particle='gas', weight_by=None, rescale=1.0,
+                                ranges_override=None, panels=('relative', 'absolute'),
+                                get_stack_kwargs=None, mass_name=None):
+    """Recompute the numeric data underlying make_profile_plots(...) and return it as a
+    tidy (long-format) pandas DataFrame, i.e. one row per (panel, mass bin, radius) point.
+
+    This reproduces exactly the same mass bins/panels/lines that make_profile_plots would
+    draw, but returns the underlying numbers instead of plotting them. Only the mean
+    profile values that are actually plotted as lines are included -- no bootstrap error
+    ranges/bands, and no reference/comparison curves (e.g. Arnaud profiles) are output.
+
+    Parameters mirror make_profile_plots. Columns of the returned DataFrame:
+        panel, mass_bin, M_min_log10Msol, M_max_log10Msol, x_units, x, <v>
+    where <v> is named after the requested property (e.g. 'p'), x is r/r200m for the
+    'relative' panel or r in Mpc for the 'absolute' panel.
+    """
+    if ranges_override is None:
+        ranges_override = ranges
+    if get_stack_kwargs is None:
+        get_stack_kwargs = {}
+    if mass_name is None:
+        mass_name = globals()['mass_name']
+
+    timestep_name = f"{box}/%{tsnum}.hdf5"
+    is_function = v.endswith('()')
+    name = v[:-2] if is_function else v
+
+    rows = []
+    for panel in panels:
+        relative = (panel == 'relative')
+        prop_name = f'{name}_r200m_relative' if relative else name
+        if is_function:
+            prop_name += '()'
+        if particle == 'ratio':
+            prop_name = f'gas_{prop_name}/all_{prop_name}'
+        else:
+            prop_name = f'{particle}_{prop_name}'
+
+        panel_weight_by = weight_by
+        if panel_weight_by is not None and relative:
+            panel_weight_by += '_r200m_relative'
+        panel_weight_by = None if panel_weight_by is None else f'{particle}_{panel_weight_by}'
+
+        x_units = 'r/r200m' if relative else 'Mpc'
+
+        for M_min, M_max in ranges_override:
+            kwargs = get_stack_kwargs | {'M_name': mass_name, 'timestep_name': timestep_name,
+                                          'weight_by': panel_weight_by}
+            try:
+                profile, _profile_min, _profile_max, xs, _labels, _log10_r200 = get_stack(
+                    prop_name, M_min, M_max, **kwargs)
+            except NoHalosInStackError:
+                continue
+
+            profile = profile * rescale
+            if (profile <= 0).all():
+                profile = -profile
+            x = 10.0 ** xs
+
+            mass_bin = f">10^{M_min}" if M_max >= 100 else f"10^{M_min}-10^{M_max}"
+
+            for x_val, y_val in zip(x, profile):
+                rows.append({
+                    'panel': panel,
+                    'mass_bin': mass_bin,
+                    'M_min_log10Msol': M_min,
+                    'M_max_log10Msol': M_max,
+                    'x_units': x_units,
+                    'x': x_val,
+                    v: y_val,
+                })
+
+    return pd.DataFrame(rows)
+
+
 def make_profile_plots(v, tsnum=8, box="L0200N0720_HYDRO_FIDUCIAL", 
                        newfig=True, weight_by=None,
                        particle='gas', plot_kwargs={}, get_stack_kwargs={}, ranges_override=None,
