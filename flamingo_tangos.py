@@ -4,8 +4,8 @@ from tangos.properties.pynbody import spherical_region
 from tangos.properties import LiveHaloProperties
 from tangos.properties.pynbody.centring import centred_calculation
 import pynbody, pynbody.halo
-import coolrate # for derived property ps20_cooling_time
-import entropy_generation # for derived properties entropy_generation_rate
+import coolrate # noqa: F401; for derived property ps20_cooling_time
+import entropy_generation # noqa: F401; for derived properties entropy_generation_rate
 
 import numpy as np
 
@@ -14,6 +14,8 @@ import tqdm
 
 from typing import Iterator, Union
 from collections import defaultdict 
+
+REGION_RADIUS_TOLERANCE = 1.1 # expansion factor for radius of spherical region used to calc properties
 
 __version__ = "0.1.0"
 
@@ -417,6 +419,23 @@ def _get_velocity_centre(data, region_sizes=['25 kpc', '50 kpc', '200 kpc']):
             pass
     return np.average(data['vel'], axis=0, weights=data['mass'])
 
+class FlamingoEntropyProductionStat(spherical_region.SphericalRegionPropertyCalculation):
+    names = "entropy_production_rate_mean", "entropy_production_rate_weighted_density",
+
+    def calculate(self, data, existing_properties):
+        data = data.gas
+        mean_density = (data['entropy_generation_rate']*data['rho']).sum()/data['entropy_generation_rate'].sum()
+        mean_rate = (data['entropy_generation_rate']*data['rho']).sum()/data['rho'].sum()
+        return mean_rate, mean_density
+
+    def region_specification(self, db_data):
+            return pynbody.filt.Sphere(db_data["r200m"], db_data['shrink_center'])
+
+    def requires_property(self):
+        return ["shrink_center", "r200m"] 
+
+    
+
 class FlamingoDensityProfileBase(spherical_region.SphericalRegionPropertyCalculation):
     names = "_gas_density", "_gas_p", "_gas_entropy", \
             "_gas_temp", "_gas_rho", "_gas_vr", "_gas_vr_disp", "_gas_mass_enclosed", "_gas_mass_enclosed_2d", \
@@ -581,9 +600,8 @@ class FlamingoDensityProfileBase(spherical_region.SphericalRegionPropertyCalcula
         return False
     
     def region_specification(self, db_data):
-        TOLERANCE = 1.1
         _, max_rad = self._get_min_max_radius(db_data) 
-        return pynbody.filt.Sphere(max_rad*TOLERANCE, db_data['shrink_center'])
+        return pynbody.filt.Sphere(max_rad*REGION_RADIUS_TOLERANCE, db_data['shrink_center'])
 
     def requires_property(self):
         return ["shrink_center", self._radius_name]+super().requires_property()
@@ -637,8 +655,7 @@ class FlamingoEntropyRadiusHistogram(FlamingoDensityProfileBase):
         return histogram, histogram_outflow, histogram_inflow
 
     def region_specification(self, db_data):
-        TOLERANCE = 1.1
-        return pynbody.filt.Sphere(self._max_rad*1000*TOLERANCE, db_data['shrink_center'])
+        return pynbody.filt.Sphere(self._max_rad*1000*REGION_RADIUS_TOLERANCE, db_data['shrink_center'])
     
     def requires_property(self):
         return ["shrink_center"] 
@@ -653,6 +670,26 @@ class FlamingoDensityProfileRelative(FlamingoDensityProfileBase):
         maxrad = existing_properties[self._radius_name] * self._max_rad
         minrad = existing_properties[self._radius_name] * self._min_rad
         return minrad, maxrad
+
+
+@pynbody.analysis.profile.Profile.profile_property
+def entropy_generation_rate_enclosed(pro: pynbody.analysis.profile.Profile):
+    """Calculate the cumulative entropy generation rate enclosed within each radius."""
+    entropy_generation_rate_bin = np.zeros(len(pro['rbins']))
+    mass_bin = np.zeros(len(pro['rbins']))
+    mass = pro.sim['mass']
+    mass_times_Kdot = pro.sim['entropy_generation_rate']*pro.sim['mass']
+    for i in range(len(pro['rbins'])):
+        mass_bin[i] = np.sum(mass[pro.binind[i]])
+        entropy_generation_rate_bin[i] = np.sum(mass_times_Kdot[pro.binind[i]])
+
+    entropy_generation_cum = np.cumsum(entropy_generation_rate_bin)
+    mass_cum = np.cumsum(mass_bin)
+
+    return entropy_generation_cum / mass_cum
+
+
+
     
 class FlamingoDensityFromMassProfileRelative(LiveHaloProperties, FlamingoDensityProfileRelative):
     particle_name = "gas"
