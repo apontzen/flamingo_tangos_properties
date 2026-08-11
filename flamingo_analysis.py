@@ -339,16 +339,17 @@ def make_binned_by_mass_plot(property_name, weight_property_name = None,
                              error_range: str | tuple ='uncertainty-bootstrap',
                              mask_property_name = None, mask_property_value = None,
                              use_band = True, with_fit=False, fit_range=None,
-                             x_offset=0.0, readoff_values_at=None):
+                             x_offset=0.0, readoff_values_at=None,
+                             y_transform_function = lambda y: y):
     bin_centers, binned_means, binned_range_positive, binned_range_negative = _get_binned_statistics(property_name, weight_property_name, mask_property_name, mask_property_value, bin_name, num_bins, bin_range, ts_name, error_range)
 
     if use_band:
-        p.plot(bin_centers + x_offset, binned_means, **plot_kwargs)
+        p.plot(bin_centers + x_offset, y_transform_function(binned_means), **plot_kwargs)
         plot_kwargs_no_label = {**plot_kwargs, 'label': None}
-        p.fill_between(bin_centers + x_offset, binned_means - binned_range_negative, binned_means + binned_range_positive, alpha=0.2, **plot_kwargs_no_label)
+        p.fill_between(bin_centers + x_offset, y_transform_function(binned_means - binned_range_negative), y_transform_function(binned_means + binned_range_positive), alpha=0.2, **plot_kwargs_no_label)
         
     else:
-        p.errorbar(bin_centers+x_offset, binned_means, yerr=[binned_range_negative, binned_range_positive], fmt='o', **plot_kwargs)
+        p.errorbar(bin_centers+x_offset, y_transform_function(binned_means), yerr=[y_transform_function(binned_range_negative), y_transform_function(binned_range_positive)], fmt='o', **plot_kwargs)
 
     if readoff_values_at is not None:
         readoff_values = np.interp(readoff_values_at, bin_centers, binned_means)
