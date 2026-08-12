@@ -425,9 +425,9 @@ class FlamingoEntropyProductionStat(spherical_region.SphericalRegionPropertyCalc
 
     def calculate(self, data, existing_properties):
         data = data.gas
-        mean_density = (data['entropy_generation_rate']*data['rho']).sum()/data['entropy_generation_rate'].sum()
-        mean_rate = (data['entropy_generation_rate']*data['rho']).sum()/data['rho'].sum()
-        mean_rate_m23 = (data['entropy_generation_rate']*data['rho']**(-2/3)).sum()/data['entropy_generation_rate'].sum()
+        mean_density = (data['mass']*data['entropy_generation_rate']*data['rho']).sum()/(data['mass']*data['entropy_generation_rate']).sum()
+        mean_rate = (data['mass']*data['entropy_generation_rate']*data['rho']).sum()/(data['mass']*data['rho']).sum()
+        mean_rate_m23 = (data['mass']*data['entropy_generation_rate']*data['rho']**(-2/3)).sum()/(data['mass']*data['entropy_generation_rate']).sum()
         return mean_rate, mean_density, mean_rate_m23
 
     def region_specification(self, db_data):
