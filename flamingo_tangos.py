@@ -448,8 +448,8 @@ class FlamingoDensityProfileBase(spherical_region.SphericalRegionPropertyCalcula
             "_gas_vr_inflow", "_gas_vr_outflow", "_gas_cs", \
             "_gas_energy_inflow", "_gas_energy_outflow", "_dm_energy_inflow", "_dm_energy_outflow", \
             "_gas_cooltime", "_gas_cooltime_inflow", "_gas_cooltime_outflow", \
-            "_all_mass_enclosed", "_all_mdot", "_gas_entropy_generation"
-
+            "_all_mass_enclosed", "_all_mdot", "_gas_entropy_generation", \
+            "_gas_entropy_generation_shock_new", "_gas_entropy_generation_cond_new"
 
     _nbins = 50
 
@@ -475,6 +475,8 @@ class FlamingoDensityProfileBase(spherical_region.SphericalRegionPropertyCalcula
             data.gas['p']
             data.gas['cs'].convert_units('km s^-1')
             data.gas['entropy_generation_rate'].convert_units('Msol^-2/3 kpc^2 km^2 s^-2 Myr^-1')
+            data.gas['viscous_entropy_rate'].convert_units('Msol^-2/3 kpc^2 km^2 s^-2 Myr^-1')
+            data.gas['conduction_entropy_rate'].convert_units('Msol^-2/3 kpc^2 km^2 s^-2 Myr^-1')
             data.gas['ps20_cooling_time'].convert_units('Gyr')
 
             data['energy_flow_integrand'] = (data['vr'] * (data['vel']**2).sum(axis=1)/2).in_units("erg kpc Myr^-1 Msol^-1")
@@ -511,10 +513,12 @@ class FlamingoDensityProfileBase(spherical_region.SphericalRegionPropertyCalcula
             vr_in = pro_inflow_vr_weighted['vr']
             cooltime_in = pro_inflow_vr_weighted['ps20_cooling_time']
 
-            vr, vr_disp, mass_enc, mdot, mdot_inflow, mdot_outflow, mass_enc_2d, energy_outflow, energy_inflow, entropy_generation = self._get_profiles(data.gas, minrad, maxrad)
+            vr, vr_disp, mass_enc, mdot, mdot_inflow, mdot_outflow, mass_enc_2d, energy_outflow, energy_inflow, entropy_generation, \
+               entropy_generation_new, entropy_generation_cond_new = self._get_profiles(data.gas, minrad, maxrad)
 
 
-            vr_dm, vr_disp_dm, mass_enc_dm, mdot_dm, mdot_inflow_dm, mdot_outflow_dm, mass_enc_2d_dm, energy_outflow_dm, energy_inflow_dm, _ = self._get_profiles(data.dm, minrad, maxrad)
+            vr_dm, vr_disp_dm, mass_enc_dm, mdot_dm, mdot_inflow_dm, mdot_outflow_dm, mass_enc_2d_dm, energy_outflow_dm, energy_inflow_dm, \
+                _, _, _ = self._get_profiles(data.dm, minrad, maxrad)
 
             _, _, mass_enc_all, mdot_all, _, _, _, _, _, _ = self._get_profiles(data, minrad, maxrad)
 
@@ -525,7 +529,7 @@ class FlamingoDensityProfileBase(spherical_region.SphericalRegionPropertyCalcula
                 mdot, mdot_inflow, mdot_outflow, mdot_dm, mdot_inflow_dm, mdot_outflow_dm, entropy_out, entropy_in, temp_out, \
                 temp_in, den_out, den_in, vr_in, vr_out, cs, energy_inflow, energy_outflow, energy_inflow_dm, energy_outflow_dm, \
                 cooltime, cooltime_in, cooltime_out, \
-                mass_enc_all, mdot_all, entropy_generation
+                mass_enc_all, mdot_all, entropy_generation, entropy_generation_new, entropy_generation_cond_new
 
 
     def _make_vol_weighted_profile(self, data, minrad, maxrad):
@@ -547,8 +551,10 @@ class FlamingoDensityProfileBase(spherical_region.SphericalRegionPropertyCalcula
         mdot = pro['mdot']
         if len(data.dm) == 0 and len(data.gas) > 0:
             entropy_generation = pro['entropy_generation_rate']
+            entropy_generation_new = pro['viscous_entropy_rate']
+            entropy_generation_cond_new = pro['conduction_entropy_rate']
         else:
-            entropy_generation = np.zeros_like(mass_enc)
+            entropy_generation = entropy_generation_new = entropy_generation_cond_new = np.zeros_like(mass_enc)
 
         filt_inflow = pynbody.filt.LowPass('vr', 0)
         pro_inflow = pynbody.analysis.profile.Profile(data[filt_inflow], type='log', ndim=3,
@@ -569,7 +575,7 @@ class FlamingoDensityProfileBase(spherical_region.SphericalRegionPropertyCalcula
                                                 min=minrad, max=maxrad, nbins=self._nbins)
         mass_enc_2d = pro['mass_enc']
 
-        return vr,vr_disp,mass_enc,mdot,mdot_inflow,mdot_outflow,mass_enc_2d, energy_outflow, energy_inflow, entropy_generation
+        return vr,vr_disp,mass_enc,mdot,mdot_inflow,mdot_outflow,mass_enc_2d, energy_outflow, energy_inflow, entropy_generation, entropy_generation_new, entropy_generation_cond_new
 
     def _get_min_max_radius(self, existing_properties):
         raise NotImplementedError("Subclasses must implement _get_min_max_radius method")

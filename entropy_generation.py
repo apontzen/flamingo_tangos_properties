@@ -67,6 +67,9 @@ def entropy_generation_rate(sim):
     Uses the per-particle Cullen & Dehnen viscosity switch (ViscosityParameters)
     as alpha_V.  In SPHENIX, alpha multiplies both the linear and quadratic
     viscous terms, so dK/dt = (gamma-1) * K * |theta| * M * alpha * (1 + beta_V * M).
+
+    WARNING: the Balsara switch is omitted as the curl is not available. This may
+    overestimate entropy production in rotating shear flows (e.g. galaxy disks).
     """
     K = sim["entropy_function"]
     theta = sim["VelocityDivergences"]
@@ -77,12 +80,12 @@ def entropy_generation_rate(sim):
 
     kdot = SimArray(np.zeros(len(sim)), units=K.units * theta.units)
     kdot[compressing] = (
-        (GAMMA - 1.0)
+        GAMMA * (GAMMA - 1.0)
         * K[compressing]
         * np.abs(theta[compressing])
         * mach[compressing]
-        * alpha[compressing]
-        * (1.0 + BETA_V * mach[compressing])
+        * alpha[compressing] # missing balsara[compressing], as per docstring above
+        * (1.0 + 0.5 * BETA_V * mach[compressing])
     )
 
     return kdot
