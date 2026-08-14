@@ -353,12 +353,8 @@ def viscosity_du_dt(sim, nn=N_NEIGHBOURS):
     n = len(sim)
     f = FIXED_GRADH
 
-    print(g["mu_raw"].max(), g["mu_raw"].min())
-
     # Eqn 16: only converging pairs dissipate.
     mu = np.where(g["mu_raw"] < 0.0, g["mu_raw"], 0.0)
-
-    print(mu.max(), mu.min())
 
     cs = np.sqrt(GAMMA * g["p"] / g["rho"])
     v_sig = cs[i] + cs[j] - BETA_V * mu                       # Eqn 17
@@ -371,7 +367,7 @@ def viscosity_du_dt(sim, nn=N_NEIGHBOURS):
 
     gsym = f * g["wi"] + f * g["wj"]
     # Eqn 14: du_i/dt = -(1/2) sum_j m_j zeta_ij v_ij . [grad terms]
-    contrib = -0.5 * zeta * mu * gsym
+    contrib = -0.25 * zeta * mu * gsym
 
     out = _accumulate(n, i, g["mass"][j] * contrib)
     out += _accumulate(n, j, g["mass"][i] * contrib)

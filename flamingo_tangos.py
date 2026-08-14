@@ -6,6 +6,7 @@ from tangos.properties.pynbody.centring import centred_calculation
 import pynbody, pynbody.halo
 import coolrate # noqa: F401; for derived property ps20_cooling_time
 import entropy_generation # noqa: F401; for derived properties entropy_generation_rate
+import entropy_generation_2 # noqa: F401; for derived properties viscous_entropy_rate, conduction_entropy_rate
 
 import numpy as np
 
@@ -475,8 +476,12 @@ class FlamingoDensityProfileBase(spherical_region.SphericalRegionPropertyCalcula
             data.gas['p']
             data.gas['cs'].convert_units('km s^-1')
             data.gas['entropy_generation_rate'].convert_units('Msol^-2/3 kpc^2 km^2 s^-2 Myr^-1')
+
+            # CAUTION - these are horribly slow / inefficient...
+
             data.gas['viscous_entropy_rate'].convert_units('Msol^-2/3 kpc^2 km^2 s^-2 Myr^-1')
             data.gas['conduction_entropy_rate'].convert_units('Msol^-2/3 kpc^2 km^2 s^-2 Myr^-1')
+            
             data.gas['ps20_cooling_time'].convert_units('Gyr')
 
             data['energy_flow_integrand'] = (data['vr'] * (data['vel']**2).sum(axis=1)/2).in_units("erg kpc Myr^-1 Msol^-1")
@@ -520,7 +525,7 @@ class FlamingoDensityProfileBase(spherical_region.SphericalRegionPropertyCalcula
             vr_dm, vr_disp_dm, mass_enc_dm, mdot_dm, mdot_inflow_dm, mdot_outflow_dm, mass_enc_2d_dm, energy_outflow_dm, energy_inflow_dm, \
                 _, _, _ = self._get_profiles(data.dm, minrad, maxrad)
 
-            _, _, mass_enc_all, mdot_all, _, _, _, _, _, _ = self._get_profiles(data, minrad, maxrad)
+            _, _, mass_enc_all, mdot_all, _, _, _, _, _, _, _, _ = self._get_profiles(data, minrad, maxrad)
 
         finally:
             data['vel'] += vel_centre  
