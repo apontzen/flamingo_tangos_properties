@@ -73,6 +73,13 @@ class FlamingoInputHandler(tangos.input_handlers.pynbody.Gadget4HDFSubfindInputH
             # on each process, so we pre-calculate the cooling rates here
 
             _ = f.gas['ps20_cooling_time']
+
+            # here is a complete mess then:
+
+            print("Getting viscous entropy rate:")
+            f.gas['viscous_entropy_rate'].convert_units('Msol^-2/3 kpc^2 km^2 s^-2 Myr^-1')
+            print("Getting conduction entropy rate:")
+            f.gas['conduction_entropy_rate'].convert_units('Msol^-2/3 kpc^2 km^2 s^-2 Myr^-1')
         return f
     
     def enumerate_objects(self, ts_extension, object_typetag="halo", min_halo_particles=100):
@@ -479,8 +486,7 @@ class FlamingoDensityProfileBase(spherical_region.SphericalRegionPropertyCalcula
 
             # CAUTION - these are horribly slow / inefficient...
 
-            data.gas['viscous_entropy_rate'].convert_units('Msol^-2/3 kpc^2 km^2 s^-2 Myr^-1')
-            data.gas['conduction_entropy_rate'].convert_units('Msol^-2/3 kpc^2 km^2 s^-2 Myr^-1')
+            
             
             data.gas['ps20_cooling_time'].convert_units('Gyr')
 

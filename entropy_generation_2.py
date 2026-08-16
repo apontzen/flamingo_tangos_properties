@@ -187,14 +187,22 @@ _U_P = "Msol kpc**-1 s**-2"
 
 def _arrays(sim):
     """Snapshot fields as plain float64 arrays in the internal unit system."""
+    sim.physical_units()
+    sim["pos"].convert_units(_U_LEN)
+    sim["vel"].convert_units(_U_VEL)
+    sim["mass"].convert_units(_U_MASS)
+    sim["rho"].convert_units(_U_RHO)
+    sim["p"].convert_units(_U_P)
+    sim["u"].convert_units(_U_U)
+    sim["smooth"].convert_units(_U_LEN)
     return dict(
-        pos=np.asarray(sim["pos"].in_units(_U_LEN), dtype=np.float64),
-        vel=np.asarray(sim["vel"].in_units(_U_VEL), dtype=np.float64),
-        mass=np.asarray(sim["mass"].in_units(_U_MASS), dtype=np.float64),
-        rho=np.asarray(sim["rho"].in_units(_U_RHO), dtype=np.float64),
-        p=np.asarray(sim["p"].in_units(_U_P), dtype=np.float64),
-        u=np.asarray(sim["u"].in_units(_U_U), dtype=np.float64),
-        h=np.asarray(sim["smooth"].in_units(_U_LEN), dtype=np.float64),
+        pos=sim['pos'],
+        vel=sim['vel'],
+        mass=sim['mass'],
+        rho=sim['rho'],
+        p=sim['p'],
+        u=sim['u'],
+        h=sim['smooth']
     )
 
 
