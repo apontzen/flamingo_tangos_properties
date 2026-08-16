@@ -4,7 +4,8 @@ scheme (Borrow et al. 2022, MNRAS 511, 2367), as used in FLAMINGO.
 
 The dissipation sums are evaluated directly from the paper's pairwise
 equations, using pynbody's KDTree.pair_reduce to walk the neighbour pairs in
-C++ and hand them to numpy in blocks.
+C++ and accumulate them onto particles.  The per-pair algebra it calls back
+for is a numba kernel, one call per block of pairs.
 
 The velocity divergence and curl needed by the Balsara switch are not done
 that way: they are ordinary linear SPH sums, so they go through pynbody's own
@@ -45,8 +46,8 @@ The form implemented,
 
 has G_ij symmetric under i <-> j, so m_i du_i/dt + m_j du_j/dt = 0 pairwise
 and total energy is conserved exactly.  This now holds by construction rather
-than by arithmetic accident: pair_reduce visits each unordered pair once and
-accumulates both ends from that single visit, so returning an antisymmetric
+than by arithmetic accident: the symmetric pair set visits each unordered pair
+once and both ends are accumulated from that single visit, so an antisymmetric
 contribution makes sum_i m_i du_i/dt = 0 an algebraic identity.
 check_energy_conservation() verifies it anyway, as a check on the signs.
 
@@ -80,12 +81,11 @@ checks the identification end to end.
 
 Neighbour completeness
 ----------------------
-pair_reduce supplies every pair with r <= 2h, and the kernel support is at
-GAMMA_K * h = 1.936 h, so the pair list always covers the support in full.
-The neighbour-count and truncation-warning machinery this module used to carry
-is therefore gone: there is nothing left to truncate.  The built-in operators
-gather at 2 h_k, which is GAMMA_K * h exactly, so they too see the whole
-support and nothing beyond it.
+Every walk here binds h_k to the tree, so the pair set runs out to 2 h_k,
+which is GAMMA_K * h -- the kernel support exactly.  Nothing inside the
+support is missed and nothing outside it is visited.  The neighbour-count and
+truncation-warning machinery this module used to carry is therefore gone:
+there is nothing left to truncate.
 
 Units
 -----
@@ -99,10 +99,31 @@ r/h and hence into every kernel evaluation here.
 
 Periodicity
 -----------
-The displacements supplied by pair_blocks are already minimum-imaged, so pairs
+The displacements supplied by pair_reduce are already minimum-imaged, so pairs
 straddling a periodic boundary are handled correctly.  (A previous version of
 this module computed pos[j] - pos[i] directly while taking r from the tree,
 which silently produced separations of order the box size for such pairs.)
+
+Cost
+----
+The neighbour walk runs in C++ and the pair algebra in numba kernels that take
+a whole block of pairs in one pass, so this runs comfortably on subvolumes of
+a few 1e6 particles.  Each du/dt function performs one pair walk; the
+viscosity additionally walks twice for the Balsara switch.
+
+The pair algebra is not where the time goes.  Writing the same equations as
+numpy array expressions -- the _numpy variants below -- costs 6 to 10 times
+more overall, and 8 to 16 times more counting only the algebra itself,
+because every intermediate becomes a freshly allocated array of the block
+length and every particle property is gathered anew at each of the several
+places it appears.
+
+What is left divides roughly evenly between the neighbour walk, which pynbody
+runs across several threads, and pair_reduce accumulating the contributions
+back onto particles, which is numpy and single threaded.  Doing that scatter
+here instead, in numba, would save about a third; it is left to pynbody so
+that this module stays a straightforward use of the public API.  On 1e6
+particles with 33 pairs each the whole conduction term takes about a second.
 
 Required fields
 ---------------
@@ -113,9 +134,11 @@ Required fields
 """
 
 import numpy as np
+from numba import njit, prange
 
 import pynbody
 from pynbody.array import SimArray
+from pynbody.kdtree import buffered_kernel
 from pynbody.sph.kernels import WendlandC2Kernel
 
 GAMMA = 5.0 / 3.0
@@ -130,6 +153,14 @@ N_NEIGHBOURS = 65
 BETA_V = 3.0                # Eqn 17, viscosity_beta
 ALPHA_V_MAX = 2.0           # Eqn 23
 FIXED_GRADH = 1.0           # f_ij, see module docstring
+
+_BLOCKSIZE = 1 << 21
+# Pairs handed to the numba kernels at a time.  Larger than pair_reduce's own
+# default, because with a compiled kernel doing the algebra it is the walk and
+# the scatter back onto particles that dominate, and both prefer long blocks.
+# Worth perhaps 30 per cent over the default here; beyond this it flattens off
+# and only the memory grows (48 bytes per pair, plus 16 for the two
+# contributions).
 
 INCLUDE_HUBBLE_FLOW = True
 # Applied to the velocity difference in the divergence and curl estimates
@@ -177,12 +208,19 @@ def _pair_context(sim):
     The snapshot's own smoothing lengths are bound to the tree, since the
     SPHENIX equations are defined with the h the simulation itself used.  Left
     to itself, pynbody would recompute h from a fixed neighbour count.
+
+    What is bound is h_k, not h, exactly as in _operator_context: pair_blocks
+    then emits pairs out to 2 h_k = GAMMA_K * h, which is the kernel support.
+    Binding h instead would emit everything out to 2h, of which the outermost
+    shell contributes identically zero -- about 10 per cent of the pairs, for
+    nothing.
     """
     sim.build_tree()
     tree = sim.kdtree
     tree.set_kernel(_KERNEL)
 
-    h_tree = np.asarray(sim["smooth"].in_units(sim["pos"].units),
+    pos_units = sim["pos"].units
+    h_tree = np.asarray(GAMMA_K * sim["smooth"].in_units(pos_units) / 2.0,
                         dtype=sim["pos"].dtype)
     tree.set_array_ref("smooth", h_tree)
 
@@ -267,17 +305,19 @@ def _div_curl(sim):
     These are exactly what pynbody's sph_divergence and sph_curl compute, once
     they are asked for the mass-weighted average (weighting="mass", i.e. the
     volume element m_j / rho_i rather than m_j / rho_j).  Both therefore run
-    threaded in C++ rather than as a Python pair walk; _div_curl_pairwise below
-    is the equivalent written out longhand, and validate_div_curl() checks the
-    two agree.
+    threaded in C++, some 30x faster than the equivalent Python pair walk,
+    which they were checked against particle by particle.
 
     Hubble flow
     -----------
     v here is the peculiar velocity, so the divergence of the full velocity
     field carries an extra H * (1/rho_i) sum_j m_j d_ij . grad_i W_ij.  That
     sum is a purely geometric quantity, independent of the velocity field, and
-    equals 3 up to the kernel's discretisation error -- see hubble_term_error()
-    -- so it is added as the continuum value 3H.  The curl needs no such term:
+    equals 3 in the continuum, so it is added as 3H.  The discrete sum is a
+    poor estimate of that (28 per cent RMS scatter on FLAMINGO, biased low),
+    and using it instead moves div v away from the snapshot's own
+    VelocityDivergences rather than towards them, which is consistent with
+    SWIFT also adding the continuum value.  The curl needs no such term:
     d_ij x grad_i W_ij vanishes identically, the two being parallel.
     """
     tree, nn = _operator_context(sim)
@@ -307,7 +347,110 @@ def balsara(sim):
 
 # ---------------------------------------------------------------------------
 # Dissipation terms
+#
+# Each comes in two forms.  The public one calls a numba kernel that runs the
+# whole pair block in one pass; the _numpy one immediately below it is the
+# same equations written as array expressions, kept as the readable statement
+# of the physics and checked against by validate_du_dt().  The numba versions
+# are around 25x faster on the pair algebra, which matters because there are
+# tens of pairs per particle; see the Cost section of the module docstring.
 # ---------------------------------------------------------------------------
+
+@njit(cache=True, nogil=True, parallel=True)
+def _conduction_pairs(i, j, dx, r, p, p_alpha_d, rho, u, vel, mass,
+                      inv_h, grad_c, fixed_gradh, out_i, out_j):
+    """Per-pair conduction contribution; see conduction_du_dt_numpy.
+
+    inv_h[k] converts a tree-frame separation to r/h_k for particle k, and
+    grad_c[k] is 105 / (16 pi h_k**4 rho_k), so that the magnitude of the
+    kernel gradient over rho is grad_c * q * (1 - q/2)**3.
+
+    Fills the two contributions pair_reduce expects, one for each end of the
+    pair.  They are equal and opposite, conduction moving energy between the
+    two rather than creating it.
+    """
+    for k in prange(i.shape[0]):
+        ia = i[k]
+        jb = j[k]
+        rk = r[k]
+
+        # (v_j - v_i) . dhat, with the 1/r of dhat applied at the end; the
+        # ratio is dimensionless, so no unit conversion is needed
+        dot = ((vel[jb, 0] - vel[ia, 0]) * dx[k, 0]
+               + (vel[jb, 1] - vel[ia, 1]) * dx[k, 1]
+               + (vel[jb, 2] - vel[ia, 2]) * dx[k, 2])
+        v_vel = abs(dot) / rk
+
+        pa = p[ia]
+        pb = p[jb]
+        alpha_ij = (p_alpha_d[ia] + p_alpha_d[jb]) / (pa + pb)   # Eqn 27
+        v_press = np.sqrt(2.0 * abs(pa - pb) / (rho[ia] + rho[jb]))
+        v_d = 0.5 * alpha_ij * (v_vel + v_press)                 # Eqn 26
+
+        qa = rk * inv_h[ia]
+        ta = 1.0 - 0.5 * qa
+        ga = grad_c[ia] * qa * ta * ta * ta if ta > 0.0 else 0.0
+
+        qb = rk * inv_h[jb]
+        tb = 1.0 - 0.5 * qb
+        gb = grad_c[jb] * qb * tb * tb * tb if tb > 0.0 else 0.0
+
+        c = v_d * (u[jb] - u[ia]) * fixed_gradh * (ga + gb)
+        out_i[k] = mass[jb] * c
+        out_j[k] = -mass[ia] * c
+
+
+@njit(cache=True, nogil=True, parallel=True)
+def _viscosity_pairs(i, j, dx, r, rho, vel, cs, alpha_v, balsara_b, mass,
+                     inv_h, grad_c, beta_v, fixed_gradh, out_i, out_j):
+    """Per-pair viscous contribution; see viscosity_du_dt_numpy.
+
+    Both ends gain, viscosity dissipating kinetic energy into heat rather
+    than moving it about, so the two contributions have the same sign.
+    """
+    for k in prange(i.shape[0]):
+        ia = i[k]
+        jb = j[k]
+        rk = r[k]
+
+        dot = ((vel[jb, 0] - vel[ia, 0]) * dx[k, 0]
+               + (vel[jb, 1] - vel[ia, 1]) * dx[k, 1]
+               + (vel[jb, 2] - vel[ia, 2]) * dx[k, 2])
+        mu = dot / rk
+        if mu > 0.0:
+            mu = 0.0                                             # Eqn 16
+
+        v_sig = cs[ia] + cs[jb] - beta_v * mu                    # Eqn 17
+        alpha_ij = 0.25 * (alpha_v[ia] + alpha_v[jb]) \
+            * (balsara_b[ia] + balsara_b[jb])                    # Eqn 19
+        zeta = -alpha_ij * mu * v_sig / (rho[ia] + rho[jb])      # Eqn 15
+
+        qa = rk * inv_h[ia]
+        ta = 1.0 - 0.5 * qa
+        ga = grad_c[ia] * qa * ta * ta * ta if ta > 0.0 else 0.0
+
+        qb = rk * inv_h[jb]
+        tb = 1.0 - 0.5 * qb
+        gb = grad_c[jb] * qb * tb * tb * tb if tb > 0.0 else 0.0
+
+        c = -0.25 * zeta * mu * fixed_gradh * (ga + gb)          # Eqn 14
+        out_i[k] = mass[jb] * c
+        out_j[k] = mass[ia] * c
+
+
+def _kernel_coefficients(h_k, to_len, per_rho=None):
+    """inv_h and grad_c as used by the numba kernels.
+
+    h_k is in the internal length unit and to_len converts a tree-frame
+    separation into it, so inv_h = to_len / h_k turns r into q = r / h_k.
+    grad_c collects everything in |dW/dr| = 105 q (1 - q/2)**3 / (16 pi h_k**4)
+    that does not depend on r, optionally divided through by per_rho.
+    """
+    grad_c = 105.0 / (16.0 * np.pi * h_k ** 4)
+    if per_rho is not None:
+        grad_c = grad_c / per_rho
+    return to_len / h_k, grad_c
+
 
 def conduction_du_dt(sim):
     """
@@ -315,6 +458,48 @@ def conduction_du_dt(sim):
 
     Sign-indefinite per particle; conserves total energy pairwise by
     construction.
+    """
+    a = _arrays(sim)
+    tree, to_len, h_k = _pair_context(sim)
+    alpha_d = np.asarray(sim["DiffusionParameters"], dtype=np.float64)
+
+    inv_h, grad_c = _kernel_coefficients(h_k, to_len, per_rho=a["rho"])
+
+    return tree.pair_reduce(
+        buffered_kernel(_conduction_pairs,
+                        a["p"], a["p"] * alpha_d, a["rho"], a["u"],
+                        np.ascontiguousarray(a["vel"]), a["mass"],
+                        inv_h, grad_c, FIXED_GRADH),
+        mode="symmetric", blocksize=_BLOCKSIZE)
+
+
+def viscosity_du_dt(sim):
+    """
+    (du/dt) from artificial viscosity, Eqns 14-20, in kpc**2 s**-3.
+
+    Positive definite.  Uses the Balsara switch computed from this module's
+    own curl estimate, so alpha_V,ij = (1/4)(alpha_i + alpha_j)(B_i + B_j)
+    is complete rather than the B = 1 limit.
+    """
+    a = _arrays(sim)
+    b = balsara(sim)                    # two tree walks, before the pair loop
+    tree, to_len, h_k = _pair_context(sim)
+    alpha_v = np.asarray(sim["ViscosityParameters"], dtype=np.float64)
+    cs = np.sqrt(GAMMA * a["p"] / a["rho"])
+
+    inv_h, grad_c = _kernel_coefficients(h_k, to_len)
+
+    return tree.pair_reduce(
+        buffered_kernel(_viscosity_pairs,
+                        a["rho"], np.ascontiguousarray(a["vel"]), cs, alpha_v,
+                        b, a["mass"], inv_h, grad_c, BETA_V, FIXED_GRADH),
+        mode="symmetric", blocksize=_BLOCKSIZE)
+
+
+def conduction_du_dt_numpy(sim):
+    """
+    conduction_du_dt as array expressions.  Slower; the readable statement of
+    Eqns 25-27, and what validate_du_dt() checks the numba kernel against.
     """
     a = _arrays(sim)
     tree, to_len, h_k = _pair_context(sim)
@@ -345,16 +530,13 @@ def conduction_du_dt(sim):
     return tree.pair_reduce(pair, mode="symmetric")
 
 
-def viscosity_du_dt(sim):
+def viscosity_du_dt_numpy(sim):
     """
-    (du/dt) from artificial viscosity, Eqns 14-20, in kpc**2 s**-3.
-
-    Positive definite.  Uses the Balsara switch computed from this module's
-    own curl estimate, so alpha_V,ij = (1/4)(alpha_i + alpha_j)(B_i + B_j)
-    is complete rather than the B = 1 limit.
+    viscosity_du_dt as array expressions.  Slower; the readable statement of
+    Eqns 14-20, and what validate_du_dt() checks the numba kernel against.
     """
     a = _arrays(sim)
-    b = balsara(sim)                    # one tree walk, before the pair loop
+    b = balsara(sim)                    # two tree walks, before the pair loop
     tree, to_len, h_k = _pair_context(sim)
     mass, rho, vel = a["mass"], a["rho"], a["vel"]
 
@@ -426,9 +608,10 @@ def check_energy_conservation(sim):
     """
     sum_i m_i (du_i/dt)_cond should vanish to roundoff.
 
-    With pair_reduce this is an algebraic identity rather than a numerical
-    coincidence, so it now mainly checks that the two returned contributions
-    really are antisymmetric.  Returns the residual normalised by the sum of
+    On the symmetric pair set this is an algebraic identity rather than a
+    numerical coincidence, so it now mainly checks that the two contributions
+    _conduction_pairs returns really are equal and opposite.  Returns the
+    residual normalised by the sum of
     |m_i du_i/dt|, so a correct implementation gives ~1e-16 or better.
     """
     a = _arrays(sim)
@@ -463,6 +646,25 @@ def validate_density(sim):
     rho += mass * _KERNEL.value(np.zeros(len(sim)), h_k)  # self-contribution
 
     return rho / a["rho"] - 1.0
+
+def validate_du_dt(sim):
+    """
+    Compare the numba dissipation kernels against the array-expression forms.
+
+    Returns (conduction_err, viscosity_err), each the deviation normalised by
+    the RMS of the numpy result.  The two evaluate the same expressions with
+    the factors grouped differently -- the numba kernels hoist everything
+    r-independent into per-particle coefficients -- so the deviations should
+    sit at a few times the float64 epsilon.
+
+    Only worth running on a subvolume: the numpy forms are the slow path.
+    """
+    def dev(fast, slow):
+        return (fast - slow) / np.sqrt(np.mean(slow ** 2))
+
+    return (dev(conduction_du_dt(sim), conduction_du_dt_numpy(sim)),
+            dev(viscosity_du_dt(sim), viscosity_du_dt_numpy(sim)))
+
 
 def validate_divergence(sim):
     """
