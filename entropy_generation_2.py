@@ -132,7 +132,7 @@ Required fields
     VelocityDivergences        (validation only)
     Entropies                  (optional; else K = p / rho**gamma)
 """
-
+import contextlib
 import numpy as np
 from numba import njit, prange
 
@@ -171,14 +171,6 @@ INCLUDE_HUBBLE_FLOW = True
 
 _KERNEL = WendlandC2Kernel()
 
-# Internal working units.  Chosen mutually consistent so that
-# p = (gamma-1) * u * rho holds numerically.
-_U_LEN = "kpc"
-_U_MASS = "Msol"
-_U_VEL = "kpc s**-1"
-_U_RHO = "Msol kpc**-3"
-_U_U = "kpc**2 s**-2"
-_U_P = "Msol kpc**-1 s**-2"
 
 
 # ---------------------------------------------------------------------------
@@ -187,14 +179,6 @@ _U_P = "Msol kpc**-1 s**-2"
 
 def _arrays(sim):
     """Snapshot fields as plain float64 arrays in the internal unit system."""
-    sim.physical_units()
-    sim["pos"].convert_units(_U_LEN)
-    sim["vel"].convert_units(_U_VEL)
-    sim["mass"].convert_units(_U_MASS)
-    sim["rho"].convert_units(_U_RHO)
-    sim["p"].convert_units(_U_P)
-    sim["u"].convert_units(_U_U)
-    sim["smooth"].convert_units(_U_LEN)
     return dict(
         pos=sim['pos'],
         vel=sim['vel'],
@@ -202,11 +186,13 @@ def _arrays(sim):
         rho=sim['rho'],
         p=sim['p'],
         u=sim['u'],
-        h=sim['smooth']
+        h=sim['smooth'],
+        smooth=sim['smooth']
     )
 
 
-def _pair_context(sim):
+@contextlib.contextmanager
+def _pair_context(sim: pynbody.snapshot.SimSnap):
     """Prepare the tree for pair iteration.
 
     Returns the tree, the factor converting distances as reported by
@@ -225,27 +211,26 @@ def _pair_context(sim):
     """
     sim.build_tree()
     tree = sim.kdtree
+
+    old_kernel = tree.kernel
     tree.set_kernel(_KERNEL)
 
-    pos_units = sim["pos"].units
-    h_tree = np.asarray(GAMMA_K * sim["smooth"].in_units(pos_units) / 2.0,
+    h_tree = np.asarray(GAMMA_K * sim["smooth"] / 2.0,
                         dtype=sim["pos"].dtype)
     tree.set_array_ref("smooth", h_tree)
 
-    # Use the units object itself, not Unit(str(...)).  str() of a unit
-    # rounds its prefactor to three significant figures, so the round trip
-    # silently changes the unit: on a SWIFT snapshot pos.units prints as
-    # "3.09e+24 cm a" but is exactly Mpc a, and the round trip inflates every
-    # length by 1.0014.
-    to_len = float(sim["pos"].units.ratio(_U_LEN, **sim.conversion_context()))
+    to_len = 1.0 # let pynbody handle units now
 
-    h_k = GAMMA_K * np.asarray(sim["smooth"].in_units(_U_LEN),
-                               dtype=np.float64) / 2.0
+    h_k = GAMMA_K * sim["smooth"] / 2.0
 
-    return tree, to_len, h_k
+    try:
+        yield tree, h_k
+    finally:
+        tree.set_kernel(old_kernel)
 
 
-def _operator_context(sim):
+@contextlib.contextmanager
+def _operator_context(sim: pynbody.snapshot.SimSnap):
     """Prepare the tree for pynbody's built-in C++ smoothing operators.
 
     Those operators do not take a kernel smoothing length as an argument: they
@@ -264,18 +249,29 @@ def _operator_context(sim):
     Returns the tree and the number of neighbours to declare (used only to
     size the internal neighbour buffer, which grows on demand anyway).
     """
+    import copy
     sim.build_tree()
+
     tree = sim.kdtree
+
+    old_kernel = tree.kernel
     tree.set_kernel(_KERNEL)
 
     pos_units = sim["pos"].units
     dtype = sim["pos"].dtype
 
+    
+
     h_k = SimArray(
         np.asarray(GAMMA_K * sim["smooth"].in_units(pos_units) / 2.0,
                    dtype=dtype),
         pos_units)
-    tree.set_array_ref("smooth", h_k)
+
+    tree.set_array_ref("smooth", np.asarray(h_k, dtype=dtype))
+    tree.set_array_ref("mass", sim["mass"])
+    tree.set_array_ref("rho", np.asarray(sim["rho"], dtype=dtype))
+
+    """
 
     tree.set_array_ref(
         "mass",
@@ -285,8 +281,12 @@ def _operator_context(sim):
         "rho",
         SimArray(np.asarray(sim["rho"].in_units(rho_units), dtype=dtype),
                  rho_units))
+                 """
 
-    return tree, N_NEIGHBOURS
+    try:   
+        yield tree, N_NEIGHBOURS
+    finally:
+        tree.set_kernel(old_kernel)
 
 
 # ---------------------------------------------------------------------------
@@ -328,19 +328,17 @@ def _div_curl(sim):
     SWIFT also adding the continuum value.  The curl needs no such term:
     d_ij x grad_i W_ij vanishes identically, the two being parallel.
     """
-    tree, nn = _operator_context(sim)
+    with _operator_context(sim) as (tree, nn):
 
-    vel = SimArray(
-        np.asarray(sim["vel"].in_units(_U_VEL), dtype=sim["pos"].dtype),
-        _U_VEL)
+        vel = sim["vel"]
 
-    ctx = sim.conversion_context()
-    div = np.asarray(
-        tree.sph_divergence(vel, nsmooth=nn, weighting="mass")
-        .in_units("s**-1", **ctx), dtype=np.float64)
-    curl = np.asarray(
-        tree.sph_curl(vel, nsmooth=nn, weighting="mass")
-        .in_units("s**-1", **ctx), dtype=np.float64)
+        ctx = sim.conversion_context()
+        div = np.asarray(
+            tree.sph_divergence(vel, nsmooth=nn, weighting="mass")
+            .in_units("s**-1", **ctx), dtype=np.float64)
+        curl = np.asarray(
+            tree.sph_curl(vel, nsmooth=nn, weighting="mass")
+            .in_units("s**-1", **ctx), dtype=np.float64)
 
     return div + 3.0 * _hubble(sim), curl
 
@@ -350,7 +348,10 @@ def balsara(sim):
     div, curl = _div_curl(sim)
     cs = np.sqrt(GAMMA * a["p"] / a["rho"])
     adiv = np.abs(div)
-    return adiv / (adiv + np.linalg.norm(curl, axis=1) + 1e-4 * cs / a["h"])
+    regulariser = np.asarray(
+        (1e-4 * cs / a["h"]).in_units("s**-1", **sim.conversion_context()),
+        dtype=np.float64)
+    return adiv / (adiv + np.linalg.norm(curl, axis=1) + regulariser)
 
 
 # ---------------------------------------------------------------------------
@@ -468,17 +469,23 @@ def conduction_du_dt(sim):
     construction.
     """
     a = _arrays(sim)
-    tree, to_len, h_k = _pair_context(sim)
-    alpha_d = np.asarray(sim["DiffusionParameters"], dtype=np.float64)
+    with _pair_context(sim) as (tree, h_k):
+        alpha_d = np.asarray(sim["DiffusionParameters"], dtype=np.float64)
 
-    inv_h, grad_c = _kernel_coefficients(h_k, to_len, per_rho=a["rho"])
+        inv_h, grad_c = _kernel_coefficients(h_k, 1.0, per_rho=a["rho"])
 
-    return tree.pair_reduce(
-        buffered_kernel(_conduction_pairs,
-                        a["p"], a["p"] * alpha_d, a["rho"], a["u"],
-                        np.ascontiguousarray(a["vel"]), a["mass"],
-                        inv_h, grad_c, FIXED_GRADH),
-        mode="symmetric", blocksize=_BLOCKSIZE)
+        result = tree.pair_reduce(
+            buffered_kernel(_conduction_pairs,
+                            a["p"], a["p"] * alpha_d, a["rho"], a["u"],
+                            np.ascontiguousarray(a["vel"]), a["mass"],
+                            inv_h, grad_c, FIXED_GRADH),
+            mode="symmetric", blocksize=_BLOCKSIZE)
+
+    units = a["vel"].units * a["u"].units * a["smooth"].units**-4 * a["mass"].units / a["rho"].units
+    check_units = (a["p"].units/a["rho"].units)**(1,2)
+    if check_units != a["vel"].units:
+        raise ValueError(f"Calculation requires consistent units but found mismatch: {check_units} != {a['vel'].units}. Try calling physical_units() first.")
+    return SimArray(result, units=units)
 
 
 def viscosity_du_dt(sim):
@@ -490,18 +497,23 @@ def viscosity_du_dt(sim):
     is complete rather than the B = 1 limit.
     """
     a = _arrays(sim)
-    b = balsara(sim)                    # two tree walks, before the pair loop
-    tree, to_len, h_k = _pair_context(sim)
-    alpha_v = np.asarray(sim["ViscosityParameters"], dtype=np.float64)
-    cs = np.sqrt(GAMMA * a["p"] / a["rho"])
+    b = balsara(sim)       
 
-    inv_h, grad_c = _kernel_coefficients(h_k, to_len)
+    with _pair_context(sim) as (tree, h_k):
+        alpha_v = np.asarray(sim["ViscosityParameters"], dtype=np.float64)
+        cs = np.sqrt(GAMMA * a["p"] / a["rho"])
 
-    return tree.pair_reduce(
-        buffered_kernel(_viscosity_pairs,
-                        a["rho"], np.ascontiguousarray(a["vel"]), cs, alpha_v,
-                        b, a["mass"], inv_h, grad_c, BETA_V, FIXED_GRADH),
-        mode="symmetric", blocksize=_BLOCKSIZE)
+        inv_h, grad_c = _kernel_coefficients(h_k, 1.0)
+
+        result = tree.pair_reduce(
+            buffered_kernel(_viscosity_pairs,
+                            a["rho"], np.ascontiguousarray(a["vel"]), cs, alpha_v,
+                            b, a["mass"], inv_h, grad_c, BETA_V, FIXED_GRADH),
+            mode="symmetric", blocksize=_BLOCKSIZE)
+
+
+    units = a["vel"].units**3 * a["mass"].units * a["smooth"].units**-4 * a["rho"].units**-1
+    return SimArray(result, units=units)
 
 
 def conduction_du_dt_numpy(sim):
@@ -510,32 +522,33 @@ def conduction_du_dt_numpy(sim):
     Eqns 25-27, and what validate_du_dt() checks the numba kernel against.
     """
     a = _arrays(sim)
-    tree, to_len, h_k = _pair_context(sim)
-    mass, rho, p, u, vel = a["mass"], a["rho"], a["p"], a["u"], a["vel"]
 
-    alpha_d = np.asarray(sim["DiffusionParameters"], dtype=np.float64)
+    with _pair_context(sim) as (tree, h_k):
+        mass, rho, p, u, vel = a["mass"], a["rho"], a["p"], a["u"], a["vel"]
+        to_len = 1.0
+        alpha_d = np.asarray(sim["DiffusionParameters"], dtype=np.float64)
 
-    def pair(i, j, dx, r):
-        r_len = r * to_len
-        dhat = dx / r[:, None]          # a ratio, so needs no unit conversion
+        def pair(i, j, dx, r):
+            r_len = r * to_len
+            dhat = dx / r[:, None]          # a ratio, so needs no unit conversion
 
-        # Eqn 27: pressure-weighted conduction coefficient
-        alpha_ij = ((p[i] * alpha_d[i] + p[j] * alpha_d[j])
-                    / (p[i] + p[j]))
+            # Eqn 27: pressure-weighted conduction coefficient
+            alpha_ij = ((p[i] * alpha_d[i] + p[j] * alpha_d[j])
+                        / (p[i] + p[j]))
 
-        # Eqn 26: conduction speed.  Denominator read as rho_i + rho_j.
-        v_vel = np.abs(np.einsum("kl,kl->k", vel[j] - vel[i], dhat))
-        v_press = np.sqrt(2.0 * np.abs(p[i] - p[j]) / (rho[i] + rho[j]))
-        v_d = 0.5 * alpha_ij * (v_vel + v_press)
+            # Eqn 26: conduction speed.  Denominator read as rho_i + rho_j.
+            v_vel = np.abs(np.einsum("kl,kl->k", vel[j] - vel[i], dhat))
+            v_press = np.sqrt(2.0 * np.abs(p[i] - p[j]) / (rho[i] + rho[j]))
+            v_d = 0.5 * alpha_ij * (v_vel + v_press)
 
-        # symmetric geometric factor; see the sign note in the module docstring
-        g_sym = FIXED_GRADH * (-_KERNEL.gradient(r_len, h_k[i]) / rho[i]
-                               - _KERNEL.gradient(r_len, h_k[j]) / rho[j])
+            # symmetric geometric factor; see the sign note in the module docstring
+            g_sym = FIXED_GRADH * (-_KERNEL.gradient(r_len, h_k[i]) / rho[i]
+                                - _KERNEL.gradient(r_len, h_k[j]) / rho[j])
 
-        contrib = v_d * (u[j] - u[i]) * g_sym
-        return mass[j] * contrib, -mass[i] * contrib
+            contrib = v_d * (u[j] - u[i]) * g_sym
+            return mass[j] * contrib, -mass[i] * contrib
 
-    return tree.pair_reduce(pair, mode="symmetric")
+        return tree.pair_reduce(pair, mode="symmetric")
 
 
 def viscosity_du_dt_numpy(sim):
@@ -545,31 +558,31 @@ def viscosity_du_dt_numpy(sim):
     """
     a = _arrays(sim)
     b = balsara(sim)                    # two tree walks, before the pair loop
-    tree, to_len, h_k = _pair_context(sim)
-    mass, rho, vel = a["mass"], a["rho"], a["vel"]
+    with _pair_context(sim) as (tree, h_k):
+        mass, rho, vel = a["mass"], a["rho"], a["vel"]
 
-    alpha_v = np.asarray(sim["ViscosityParameters"], dtype=np.float64)
-    cs = np.sqrt(GAMMA * a["p"] / a["rho"])
+        alpha_v = np.asarray(sim["ViscosityParameters"], dtype=np.float64)
+        cs = np.sqrt(GAMMA * a["p"] / a["rho"])
 
-    def pair(i, j, dx, r):
-        r_len = r * to_len
-        dhat = dx / r[:, None]
+        def pair(i, j, dx, r):
+            r_len = r * to_len
+            dhat = dx / r[:, None]
 
-        # Eqn 16: only converging pairs dissipate
-        mu = np.minimum(np.einsum("kl,kl->k", vel[j] - vel[i], dhat), 0.0)
+            # Eqn 16: only converging pairs dissipate
+            mu = np.minimum(np.einsum("kl,kl->k", vel[j] - vel[i], dhat), 0.0)
 
-        v_sig = cs[i] + cs[j] - BETA_V * mu                     # Eqn 17
-        alpha_ij = 0.25 * (alpha_v[i] + alpha_v[j]) * (b[i] + b[j])  # Eqn 19
-        zeta = -alpha_ij * mu * v_sig / (rho[i] + rho[j])       # Eqn 15
+            v_sig = cs[i] + cs[j] - BETA_V * mu                     # Eqn 17
+            alpha_ij = 0.25 * (alpha_v[i] + alpha_v[j]) * (b[i] + b[j])  # Eqn 19
+            zeta = -alpha_ij * mu * v_sig / (rho[i] + rho[j])       # Eqn 15
 
-        g_sym = FIXED_GRADH * (-_KERNEL.gradient(r_len, h_k[i])
-                               - _KERNEL.gradient(r_len, h_k[j]))
+            g_sym = FIXED_GRADH * (-_KERNEL.gradient(r_len, h_k[i])
+                                - _KERNEL.gradient(r_len, h_k[j]))
 
-        # Eqn 14: du_i/dt = -(1/2) sum_j m_j zeta_ij v_ij . [grad terms]
-        contrib = -0.25 * zeta * mu * g_sym
-        return mass[j] * contrib, mass[i] * contrib
+            # Eqn 14: du_i/dt = -(1/2) sum_j m_j zeta_ij v_ij . [grad terms]
+            contrib = -0.25 * zeta * mu * g_sym
+            return mass[j] * contrib, mass[i] * contrib
 
-    return tree.pair_reduce(pair, mode="symmetric")
+        return tree.pair_reduce(pair, mode="symmetric")
 
 
 # ---------------------------------------------------------------------------
@@ -585,9 +598,8 @@ def _entropy_function(sim):
 def _to_kdot(sim, du_dt):
     """dK/dt = (K / u) du/dt, with du_dt a bare array in kpc**2 s**-3."""
     k = _entropy_function(sim)
-    u = np.asarray(sim["u"].in_units(_U_U), dtype=np.float64)
-    return SimArray(np.asarray(k) * du_dt / u,
-                    units=k.units / pynbody.units.Unit("s"))
+    u = sim["u"]
+    return k * du_dt / u 
 
 
 @pynbody.snapshot.simsnap.SimSnap.stable_derived_array
@@ -645,13 +657,13 @@ def validate_density(sim):
     A systematic offset of a few per cent points at that identification.
     """
     a = _arrays(sim)
-    tree, to_len, h_k = _pair_context(sim)
-    mass = a["mass"]
+    with _pair_context(sim) as (tree, h_k):
+        mass = a["mass"]
 
-    rho = tree.pair_reduce(
-        lambda i, j, dx, r: mass[j] * _KERNEL.value(r * to_len, h_k[i]),
-        mode="gather")
-    rho += mass * _KERNEL.value(np.zeros(len(sim)), h_k)  # self-contribution
+        rho = tree.pair_reduce(
+            lambda i, j, dx, r: mass[j] * _KERNEL.value(r, h_k[i]),
+            mode="gather")
+        rho += mass * _KERNEL.value(np.zeros(len(sim)), h_k)  # self-contribution
 
     return rho / a["rho"] - 1.0
 
