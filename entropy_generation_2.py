@@ -590,19 +590,19 @@ def _to_kdot(sim, du_dt):
                     units=k.units / pynbody.units.Unit("s"))
 
 
-@pynbody.derived_array
+@pynbody.snapshot.simsnap.SimSnap.stable_derived_array
 def conduction_entropy_rate(sim):
     """dK/dt from artificial conduction. Sign-indefinite; see module docstring."""
     return _to_kdot(sim, conduction_du_dt(sim))
 
 
-@pynbody.derived_array
+@pynbody.snapshot.simsnap.SimSnap.stable_derived_array
 def viscous_entropy_rate(sim):
     """dK/dt from artificial viscosity. Positive definite."""
     return _to_kdot(sim, viscosity_du_dt(sim))
 
 
-@pynbody.derived_array
+@pynbody.snapshot.simsnap.SimSnap.stable_derived_array
 def balsara_switch(sim):
     """B_i, Eqn 20, from this module's own curl estimate."""
     return SimArray(balsara(sim), units="1")

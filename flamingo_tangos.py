@@ -74,12 +74,6 @@ class FlamingoInputHandler(tangos.input_handlers.pynbody.Gadget4HDFSubfindInputH
 
             _ = f.gas['ps20_cooling_time']
 
-            # here is a complete mess then:
-
-            print("Getting viscous entropy rate:")
-            f.gas['viscous_entropy_rate'].convert_units('Msol^-2/3 kpc^2 km^2 s^-2 Myr^-1')
-            print("Getting conduction entropy rate:")
-            f.gas['conduction_entropy_rate'].convert_units('Msol^-2/3 kpc^2 km^2 s^-2 Myr^-1')
         return f
     
     def enumerate_objects(self, ts_extension, object_typetag="halo", min_halo_particles=100):
@@ -429,17 +423,26 @@ def _get_velocity_centre(data, region_sizes=['25 kpc', '50 kpc', '200 kpc']):
 
 class FlamingoEntropyProductionStat(spherical_region.SphericalRegionPropertyCalculation):
     names = "entropy_production_rate_mean", "entropy_production_rate_weighted_density", \
-            "entropy_production_rate_weighted_density_m23"
+            "entropy_production_rate_weighted_density_m23", "viscous_log_entropy_production_rate", \
+            "conduction_log_entropy_production_rate"
+    
+
+    # entropy is S = k_B/(mu m_p (gamma-1)) \sum_i m_i ln K_i
+    const = pynbody.units.Unit("k Msol m_p^-1").in_units("erg K^-1")/(0.59 * 2./3.)
 
     def calculate(self, data, existing_properties):
-        data = data.gas
-        mean_density = (data['mass']*data['entropy_generation_rate']*data['rho']).sum()/(data['mass']*data['entropy_generation_rate']).sum()
-        mean_rate = (data['mass']*data['entropy_generation_rate']*data['rho']).sum()/(data['mass']*data['rho']).sum()
-        mean_rate_m23 = (data['mass']*data['entropy_generation_rate']*data['rho']**(-2/3)).sum()/(data['mass']*data['entropy_generation_rate']).sum()
-        return mean_rate, mean_density, mean_rate_m23
+        data = data.gas[pynbody.filt.Sphere(existing_properties['r200m'], 
+                                            existing_properties['shrink_center'])]
+        mean_density = (data['mass']*data['viscous_entropy_rate']*data['rho']).sum()/(data['mass']*data['viscous_entropy_rate']).sum()
+        mean_rate = (data['mass']*data['viscous_entropy_rate']*data['rho']).sum()/(data['mass']*data['rho']).sum()
+        mean_rate_m23 = (data['mass']*data['viscous_entropy_rate']*data['rho']**(-2/3)).sum()/(data['mass']*data['viscous_entropy_rate']).sum()
+        viscous_log = self.const * (data['mass'] * (data['viscous_entropy_rate']/data['Entropies']).in_units("Myr^-1")).sum()
+        conduction_log = self.const * (data['mass'] * (data['conduction_entropy_rate']/data['Entropies']).in_units("Myr^-1")).sum()
+
+        return mean_rate, mean_density, mean_rate_m23, viscous_log, conduction_log
 
     def region_specification(self, db_data):
-            return pynbody.filt.Sphere(db_data["r200m"], db_data['shrink_center'])
+            return pynbody.filt.Sphere(db_data["r200m"]*REGION_RADIUS_TOLERANCE, db_data['shrink_center'])
 
     def requires_property(self):
         return ["shrink_center", "r200m"] 
@@ -482,12 +485,10 @@ class FlamingoDensityProfileBase(spherical_region.SphericalRegionPropertyCalcula
             data.gas['rho']
             data.gas['p']
             data.gas['cs'].convert_units('km s^-1')
-            data.gas['entropy_generation_rate'].convert_units('Msol^-2/3 kpc^2 km^2 s^-2 Myr^-1')
-
-            # CAUTION - these are horribly slow / inefficient...
-
-            
-            
+            entropy_rate_unit = pynbody.units.Unit("Msol^-2/3 kpc^2 km^2 s^-2 Myr^-1")
+            data.gas['entropy_generation_rate'].convert_units(entropy_rate_unit)
+            data.gas['viscous_entropy_rate'].convert_units(entropy_rate_unit)
+            data.gas['conduction_entropy_rate'].convert_units(entropy_rate_unit)
             data.gas['ps20_cooling_time'].convert_units('Gyr')
 
             data['energy_flow_integrand'] = (data['vr'] * (data['vel']**2).sum(axis=1)/2).in_units("erg kpc Myr^-1 Msol^-1")
