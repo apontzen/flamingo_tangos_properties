@@ -447,6 +447,85 @@ def _viscosity_pairs(i, j, dx, r, rho, vel, cs, alpha_v, balsara_b, mass,
         out_j[k] = mass[ia] * c
 
 
+@njit(cache=True, nogil=True, parallel=True)
+def _conduction_pairs_gradh(i, j, dx, r, p, p_alpha_d, rho, u, vel, mass, g,
+                            inv_h, grad_c, out_i, out_j):
+    """As _conduction_pairs, but with the full Eqn 11 grad-h factors
+    f_ij = 1 - g_i/m_j, f_ji = 1 - g_j/m_i in place of FIXED_GRADH; see
+    conduction_du_dt_gradh.
+    """
+    for k in prange(i.shape[0]):
+        ia = i[k]
+        jb = j[k]
+        rk = r[k]
+
+        dot = ((vel[jb, 0] - vel[ia, 0]) * dx[k, 0]
+               + (vel[jb, 1] - vel[ia, 1]) * dx[k, 1]
+               + (vel[jb, 2] - vel[ia, 2]) * dx[k, 2])
+        v_vel = abs(dot) / rk
+
+        pa = p[ia]
+        pb = p[jb]
+        alpha_ij = (p_alpha_d[ia] + p_alpha_d[jb]) / (pa + pb)   # Eqn 27
+        v_press = np.sqrt(2.0 * abs(pa - pb) / (rho[ia] + rho[jb]))
+        v_d = 0.5 * alpha_ij * (v_vel + v_press)                 # Eqn 26
+
+        qa = rk * inv_h[ia]
+        ta = 1.0 - 0.5 * qa
+        ga = grad_c[ia] * qa * ta * ta * ta if ta > 0.0 else 0.0
+
+        qb = rk * inv_h[jb]
+        tb = 1.0 - 0.5 * qb
+        gb = grad_c[jb] * qb * tb * tb * tb if tb > 0.0 else 0.0
+
+        f_ij = 1.0 - g[ia] / mass[jb]                            # Eqn 11
+        f_ji = 1.0 - g[jb] / mass[ia]
+
+        c = v_d * (u[jb] - u[ia]) * (f_ij * ga + f_ji * gb)
+        out_i[k] = mass[jb] * c
+        out_j[k] = -mass[ia] * c
+
+
+@njit(cache=True, nogil=True, parallel=True)
+def _viscosity_pairs_gradh(i, j, dx, r, rho, vel, cs, alpha_v, balsara_b, mass, g,
+                           inv_h, grad_c, beta_v, out_i, out_j):
+    """As _viscosity_pairs, but with the full Eqn 11 grad-h factors
+    f_ij = 1 - g_i/m_j, f_ji = 1 - g_j/m_i in place of FIXED_GRADH; see
+    viscosity_du_dt_gradh.
+    """
+    for k in prange(i.shape[0]):
+        ia = i[k]
+        jb = j[k]
+        rk = r[k]
+
+        dot = ((vel[jb, 0] - vel[ia, 0]) * dx[k, 0]
+               + (vel[jb, 1] - vel[ia, 1]) * dx[k, 1]
+               + (vel[jb, 2] - vel[ia, 2]) * dx[k, 2])
+        mu = dot / rk
+        if mu > 0.0:
+            mu = 0.0                                             # Eqn 16
+
+        v_sig = cs[ia] + cs[jb] - beta_v * mu                    # Eqn 17
+        alpha_ij = 0.25 * (alpha_v[ia] + alpha_v[jb]) \
+            * (balsara_b[ia] + balsara_b[jb])                    # Eqn 19
+        zeta = -alpha_ij * mu * v_sig / (rho[ia] + rho[jb])      # Eqn 15
+
+        qa = rk * inv_h[ia]
+        ta = 1.0 - 0.5 * qa
+        ga = grad_c[ia] * qa * ta * ta * ta if ta > 0.0 else 0.0
+
+        qb = rk * inv_h[jb]
+        tb = 1.0 - 0.5 * qb
+        gb = grad_c[jb] * qb * tb * tb * tb if tb > 0.0 else 0.0
+
+        f_ij = 1.0 - g[ia] / mass[jb]                            # Eqn 11
+        f_ji = 1.0 - g[jb] / mass[ia]
+
+        c = -0.25 * zeta * mu * (f_ij * ga + f_ji * gb)          # Eqn 14
+        out_i[k] = mass[jb] * c
+        out_j[k] = mass[ia] * c
+
+
 def _kernel_coefficients(h_k, to_len, per_rho=None):
     """inv_h and grad_c as used by the numba kernels.
 
@@ -459,6 +538,127 @@ def _kernel_coefficients(h_k, to_len, per_rho=None):
     if per_rho is not None:
         grad_c = grad_c / per_rho
     return to_len / h_k, grad_c
+
+
+# ---------------------------------------------------------------------------
+# Grad-h correction (Eqn 11)
+#
+# Not wired into any du/dt calculation yet -- FIXED_GRADH stays at 1.0 until
+# this has been validated.
+# ---------------------------------------------------------------------------
+
+_HYDRO_DIMENSION = 3.0  # n_D; this module is 3D throughout (see also _div_curl)
+
+
+@njit(cache=True, nogil=True, parallel=True)
+def _grad_h_pairs(i, j, dx, r, h, mass, inv_h, grad_c, val_c, n_dim, out):
+    """Per-pair contribution to n_hat_a, dn_hat_a/dh_a, drho_hat_a/dh_a; see _grad_h_field.
+
+    val_c[k] is grad_c[k] * h_k[k] = 105 / (16 pi h_k**3), the same family of
+    constant as _kernel_coefficients' grad_c but for the kernel value rather
+    than its gradient: W = val_c * t**4 * (1 - 0.8*t) with t = 1 - q/2, the
+    closed form for Wendland C2 (verified against pynbody's own kernel.value
+    to float precision).  dW/dr's magnitude is grad_c * q * t**3, as
+    elsewhere in this module; its sign is negative (the kernel decreases with
+    r), which matters here since dW/dh needs the signed derivative.
+    """
+    for k in prange(i.shape[0]):
+        ia = i[k]
+        jb = j[k]
+        rk = r[k]
+        q = rk * inv_h[ia]
+
+        if q < 2.0:
+            t = 1.0 - 0.5 * q
+            t3 = t * t * t
+            W = val_c[ia] * t3 * t * (1.0 - 0.8 * t)
+            dWdr = -grad_c[ia] * q * t3
+        else:
+            W = 0.0
+            dWdr = 0.0
+
+        dWdh = -(n_dim * W + rk * dWdr) / h[ia]
+
+        out[k, 0] = W               # contributes to n_hat_a
+        out[k, 1] = dWdh            # contributes to dn_hat_a/dh_a
+        out[k, 2] = mass[jb] * dWdh  # contributes to drho_hat_a/dh_a
+
+
+@pynbody.snapshot.SimSnap.stable_derived_array
+def grad_h_field(sim):
+    """
+    Per-particle self term g_a underlying Eqn 11's f_ab.
+
+    Eqn 11 is written with generic dummy indices a, b:
+
+        f_ab = 1 - (1/m_b) * [h_a/(n_D n_hat_a) drho_hat_a/dh_a]
+                            / [1 + h_a/(n_D n_hat_a) dn_hat_a/dh_a]
+
+    Every quantity inside the brackets is evaluated at particle a alone; b
+    enters only through the leading 1/m_b.  So the bracket itself is a single
+    per-particle field -- call it g_a -- computed once, from which
+    f_ij = 1 - g_i/m_j and f_ji = 1 - g_j/m_i then follow for any pair (this
+    is exactly how SWIFT does it: g_a is cached once per particle in
+    hydro_prepare_gradient as p->force.f, and divided through by the
+    neighbour's mass later, per pair, in the force loop).  This function
+    returns g_a; forming f_ab from it is left for later.
+
+    n_hat_a = sum_j W(r, h_a)                                        (Eqn 7)
+
+    is the unweighted counterpart of the mass density rho_hat (Eqn 5): same
+    kernel sum, but with each neighbour contributing 1 rather than m_j.
+
+    dW/dh is obtained from dW/dr via the standard homogeneity identity for a
+    compact-support kernel,
+
+        dW/dh = -(1/h) [n_D W + r dW/dr],
+
+    which follows from W(r, h) being homogeneous of degree -n_D in (r, h)
+    jointly (Euler's theorem) and holds for any linear rescaling of the
+    bandwidth.  That means it applies directly with the snapshot's own h in
+    the prefactor, even though the bandwidth actually handed to the kernel
+    object is h_k = GAMMA_K h / 2: h_k is just h rescaled by a fixed
+    constant, so evaluating W and dW/dr at h_k still gives W(r, h) and
+    dW/dr|_h correctly (this is the same h_k identification validate_density
+    checks), and only the -(1/h) prefactor needs the paper's own h.
+
+    At r = 0 the r dW/dr term vanishes identically (Wendland C2 is flat at
+    the origin), so the self-contribution needs only the kernel value there,
+    not its gradient.
+
+    Units: h_a/(n_D n_hat_a) has units of h / (1/length**3) = length**4, and
+    drho_hat_a/dh_a is a mass density over a length, mass/length**4; their
+    product is a bare mass, matching f_ab = 1 - g_a/m_b needing g_a and m_b
+    to be commensurate.  The denominator's h_a/(n_D n_hat_a) * dn_hat_a/dh_a
+    is correspondingly dimensionless, as a "1 + ..." term must be.
+    """
+    a = _arrays(sim)
+    n_D = _HYDRO_DIMENSION
+    h = np.asarray(a["h"], dtype=np.float64)
+    mass = np.asarray(a["mass"], dtype=np.float64)
+
+    with _pair_context(sim) as (tree, h_k):
+        h_k = np.asarray(h_k, dtype=np.float64)
+        inv_h, grad_c = _kernel_coefficients(h_k, 1.0)
+        inv_h = np.asarray(inv_h, dtype=np.float64)
+        grad_c = np.asarray(grad_c, dtype=np.float64)
+        val_c = grad_c * h_k
+
+        sums = tree.pair_reduce(
+            buffered_kernel(_grad_h_pairs, h, mass, inv_h, grad_c, val_c, n_D,
+                            ncols=3, both_ends=False),
+            mode="gather", blocksize=_BLOCKSIZE)
+
+    W0 = 0.2 * val_c            # t = 1 at r = 0: t**4 * (1 - 0.8*t) = 0.2
+    dWdh0 = -(n_D * W0) / h
+
+    n_hat = sums[:, 0] + W0
+    dn_hat_dh = sums[:, 1] + dWdh0
+    drho_hat_dh = sums[:, 2] + mass * dWdh0
+
+    coeff = h / (n_D * n_hat)
+    g = coeff * drho_hat_dh / (1.0 + coeff * dn_hat_dh)
+    return SimArray(g, units=a["mass"].units)
 
 
 def conduction_du_dt(sim):
@@ -515,6 +715,72 @@ def viscosity_du_dt(sim):
                             b, a["mass"], inv_h, grad_c, BETA_V, FIXED_GRADH),
             mode="symmetric", blocksize=_BLOCKSIZE)
 
+
+    units = a["vel"].units**3 * a["mass"].units * a["smooth"].units**-4 * a["rho"].units**-1
+    return SimArray(result, units=units)
+
+
+def conduction_du_dt_gradh(sim):
+    """
+    conduction_du_dt, but with the full Eqn 11 grad-h factors f_ij = 1 - g_i/m_j
+    (from grad_h_field) in place of FIXED_GRADH = 1.
+
+    Not wired into conduction_entropy_rate: this is here for comparison tests only.
+    """
+    a = _arrays(sim)
+    check_units = (a["p"].units / a["rho"].units) ** (1, 2)
+    if check_units != a["vel"].units:
+        raise ValueError(f"Calculation requires consistent units but found mismatch: {check_units} != {a['vel'].units}. Try calling physical_units() first.")
+
+    if sim["grad_h_field"].units != a["mass"].units:
+        raise ValueError(f"grad_h_field has units {sim['grad_h_field'].units}, but conduction_du_dt_gradh requires it to be in {a['mass'].units}. Try calling physical_units() first.")
+    g = sim["grad_h_field"]
+
+    with _pair_context(sim) as (tree, h_k):
+        alpha_d = np.asarray(sim["DiffusionParameters"], dtype=np.float64)
+
+        inv_h, grad_c = _kernel_coefficients(h_k, 1.0, per_rho=a["rho"])
+
+        result = tree.pair_reduce(
+            buffered_kernel(_conduction_pairs_gradh,
+                            a["p"], a["p"] * alpha_d, a["rho"], a["u"],
+                            np.ascontiguousarray(a["vel"]), a["mass"], g,
+                            inv_h, grad_c),
+            mode="symmetric", blocksize=_BLOCKSIZE)
+
+    units = a["vel"].units * a["u"].units * a["smooth"].units**-4 * a["mass"].units / a["rho"].units
+    return SimArray(result, units=units)
+
+
+def viscosity_du_dt_gradh(sim):
+    """
+    viscosity_du_dt, but with the full Eqn 11 grad-h factors f_ij = 1 - g_i/m_j
+    (from grad_h_field) in place of FIXED_GRADH = 1.
+
+    Not wired into viscous_entropy_rate: this is here for comparison tests only.
+    """
+    a = _arrays(sim)
+    check_units = (a["p"].units / a["rho"].units) ** (1, 2)
+    if check_units != a["vel"].units:
+        raise ValueError(f"Calculation requires consistent units but found mismatch: {check_units} != {a['vel'].units}. Try calling physical_units() first.")
+
+    if sim["grad_h_field"].units != a["mass"].units:
+            raise ValueError(f"grad_h_field has units {sim['grad_h_field'].units}, but conduction_du_dt_gradh requires it to be in {a['mass'].units}. Try calling physical_units() first.")
+    
+    g = sim["grad_h_field"]
+    b = balsara(sim)
+
+    with _pair_context(sim) as (tree, h_k):
+        alpha_v = np.asarray(sim["ViscosityParameters"], dtype=np.float64)
+        cs = np.sqrt(GAMMA * a["p"] / a["rho"])
+
+        inv_h, grad_c = _kernel_coefficients(h_k, 1.0)
+
+        result = tree.pair_reduce(
+            buffered_kernel(_viscosity_pairs_gradh,
+                            a["rho"], np.ascontiguousarray(a["vel"]), cs, alpha_v,
+                            b, a["mass"], g, inv_h, grad_c, BETA_V),
+            mode="symmetric", blocksize=_BLOCKSIZE)
 
     units = a["vel"].units**3 * a["mass"].units * a["smooth"].units**-4 * a["rho"].units**-1
     return SimArray(result, units=units)
