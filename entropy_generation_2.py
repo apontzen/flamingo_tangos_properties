@@ -497,7 +497,11 @@ def viscosity_du_dt(sim):
     is complete rather than the B = 1 limit.
     """
     a = _arrays(sim)
-    b = balsara(sim)       
+    check_units = (a["p"].units / a["rho"].units) ** (1, 2)
+    if check_units != a["vel"].units:
+        raise ValueError(f"Calculation requires consistent units but found mismatch: {check_units} != {a['vel'].units}. Try calling physical_units() first.")
+
+    b = balsara(sim)
 
     with _pair_context(sim) as (tree, h_k):
         alpha_v = np.asarray(sim["ViscosityParameters"], dtype=np.float64)
@@ -560,6 +564,7 @@ def viscosity_du_dt_numpy(sim):
     b = balsara(sim)                    # two tree walks, before the pair loop
     with _pair_context(sim) as (tree, h_k):
         mass, rho, vel = a["mass"], a["rho"], a["vel"]
+        to_len = 1.0
 
         alpha_v = np.asarray(sim["ViscosityParameters"], dtype=np.float64)
         cs = np.sqrt(GAMMA * a["p"] / a["rho"])
