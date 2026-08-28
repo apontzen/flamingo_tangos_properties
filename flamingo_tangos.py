@@ -442,7 +442,7 @@ class FlamingoEntropyProductionStat(spherical_region.SphericalRegionPropertyCalc
         return mean_rate, mean_density, mean_rate_m23, viscous_log, conduction_log
 
     def region_specification(self, db_data):
-            return pynbody.filt.Sphere(db_data["r200m"]*REGION_RADIUS_TOLERANCE, db_data['shrink_center'])
+            return pynbody.filt.Sphere(5*db_data["r200m"]*REGION_RADIUS_TOLERANCE, db_data['shrink_center'])
 
     def requires_property(self):
         return ["shrink_center", "r200m"] 
