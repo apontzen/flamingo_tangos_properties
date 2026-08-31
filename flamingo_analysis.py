@@ -323,10 +323,10 @@ def make_entropy_radius_percentile_band(stacked_profile, lower_percentile=16, up
     p.xlabel('log10(r/Mpc)')
     p.ylabel('log10(K/simulation unit)')
 
-def plot_entropy_guide():
+def plot_entropy_guide(scale_factor=1.0):
     mass_ar = np.linspace(12.5, 14.5, 50)
     entrop_in = vs.entropy(10**mass_ar, z=0.4)
-    p.plot(mass_ar, internal_to_keV_cm2 * entrop_in, color='orange', linestyle=':', label="Virial")
+    p.plot(mass_ar, scale_factor * internal_to_keV_cm2 * entrop_in, color='orange', linestyle=':', label="Virial")
 
 def plot_temp_guide():
     mass_ar = np.linspace(12.5, 14.5, 50)
@@ -340,13 +340,37 @@ def make_binned_by_mass_plot(property_name, weight_property_name = None,
                              mask_property_name = None, mask_property_value = None,
                              use_band = True, with_fit=False, fit_range=None,
                              x_offset=0.0, readoff_values_at=None,
+                             split_at=None,
                              y_transform_function = lambda y: y):
     bin_centers, binned_means, binned_range_positive, binned_range_negative = _get_binned_statistics(property_name, weight_property_name, mask_property_name, mask_property_value, bin_name, num_bins, bin_range, ts_name, error_range)
 
     if use_band:
-        p.plot(bin_centers + x_offset, y_transform_function(binned_means), **plot_kwargs)
         plot_kwargs_no_label = {**plot_kwargs, 'label': None}
-        p.fill_between(bin_centers + x_offset, y_transform_function(binned_means - binned_range_negative), y_transform_function(binned_means + binned_range_positive), alpha=0.2, **plot_kwargs_no_label)
+        if split_at is None:
+            p.plot(bin_centers + x_offset, y_transform_function(binned_means), **plot_kwargs)
+            p.fill_between(bin_centers + x_offset, y_transform_function(binned_means - binned_range_negative), 
+                           y_transform_function(binned_means + binned_range_positive), alpha=0.2, **plot_kwargs_no_label)
+        else:
+            mask_normal = bin_centers <= split_at
+            mask_faint = bin_centers >= split_at
+            plot_kwargs_faint = {**plot_kwargs_no_label, 'alpha': 0.3}
+            split_value = np.interp(split_at, bin_centers, binned_means)
+            split_range_positive = np.interp(split_at, bin_centers, binned_range_positive)
+            split_range_negative = np.interp(split_at, bin_centers, binned_range_negative)
+            bin_centers_normal = np.append(bin_centers[mask_normal], split_at)
+            binned_means_normal = np.append(binned_means[mask_normal], split_value)
+            binned_range_positive_normal = np.append(binned_range_positive[mask_normal], split_range_positive)
+            binned_range_negative_normal = np.append(binned_range_negative[mask_normal], split_range_negative)
+            bin_centers_faint = np.insert(bin_centers[mask_faint], 0, split_at)
+            binned_means_faint = np.insert(binned_means[mask_faint], 0, split_value)
+            binned_range_positive_faint = np.insert(binned_range_positive[mask_faint], 0, split_range_positive)
+            binned_range_negative_faint = np.insert(binned_range_negative[mask_faint], 0, split_range_negative)
+            p.plot(bin_centers_normal + x_offset, y_transform_function(binned_means_normal), **plot_kwargs)
+            p.plot(bin_centers_faint + x_offset, y_transform_function(binned_means_faint), **plot_kwargs_faint)
+            p.fill_between(bin_centers_normal + x_offset, y_transform_function(binned_means_normal - binned_range_negative_normal),
+                           y_transform_function(binned_means_normal + binned_range_positive_normal), alpha=0.2, **plot_kwargs_no_label)
+            p.fill_between(bin_centers_faint + x_offset, y_transform_function(binned_means_faint - binned_range_negative_faint),
+                           y_transform_function(binned_means_faint + binned_range_positive_faint), alpha=0.05, **plot_kwargs_no_label)
         
     else:
         p.errorbar(bin_centers+x_offset, y_transform_function(binned_means), yerr=[y_transform_function(binned_range_negative), y_transform_function(binned_range_positive)], fmt='o', **plot_kwargs)
@@ -357,6 +381,7 @@ def make_binned_by_mass_plot(property_name, weight_property_name = None,
         readoff_range_negative = np.interp(readoff_values_at, bin_centers, binned_range_negative)
         for x, y, yerr_pos, yerr_neg in zip(readoff_values_at, readoff_values, readoff_range_positive, readoff_range_negative):
             print(f"At {bin_name} = 10^{x:.2f}, value = {y:.3e} (+{yerr_pos:.3e}/-{yerr_neg:.3e})")
+            p.plot(x, y, 'o', color=plot_kwargs.get('color', None))
 
     if with_fit:
         def power_law_model(log_mass, offset, alpha):
