@@ -431,7 +431,7 @@ class FlamingoEntropyProductionStat(spherical_region.SphericalRegionPropertyCalc
     const = pynbody.units.Unit("k Msol m_p^-1").in_units("erg K^-1")/(0.59 * 2./3.)
 
     def calculate(self, data, existing_properties):
-        data = data.gas[pynbody.filt.Sphere(existing_properties['r200m'], 
+        data = data.gas[pynbody.filt.Sphere(5*existing_properties['r200m'], 
                                             existing_properties['shrink_center'])]
         mean_density = (data['mass']*data['viscous_entropy_rate']*data['rho']).sum()/(data['mass']*data['viscous_entropy_rate']).sum()
         mean_rate = (data['mass']*data['viscous_entropy_rate']*data['rho']).sum()/(data['mass']*data['rho']).sum()

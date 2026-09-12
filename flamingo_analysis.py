@@ -379,6 +379,10 @@ def make_binned_by_mass_plot(property_name, weight_property_name = None,
         readoff_values = np.interp(readoff_values_at, bin_centers, binned_means)
         readoff_range_positive = np.interp(readoff_values_at, bin_centers, binned_range_positive)
         readoff_range_negative = np.interp(readoff_values_at, bin_centers, binned_range_negative)
+        readoff_values = y_transform_function(readoff_values)
+        readoff_range_positive = y_transform_function(readoff_range_positive)
+        readoff_range_negative = y_transform_function(readoff_range_negative)
+        
         for x, y, yerr_pos, yerr_neg in zip(readoff_values_at, readoff_values, readoff_range_positive, readoff_range_negative):
             print(f"At {bin_name} = 10^{x:.2f}, value = {y:.3e} (+{yerr_pos:.3e}/-{yerr_neg:.3e})")
             p.plot(x, y, 'o', color=plot_kwargs.get('color', None))
