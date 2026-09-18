@@ -1,2 +1,7 @@
 *.db
 *.pyc
+venv*
+L02*
+*.pdf
+*.png
+*.csv

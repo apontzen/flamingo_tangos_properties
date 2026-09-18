@@ -324,10 +324,10 @@ def make_entropy_radius_percentile_band(stacked_profile, lower_percentile=16, up
     p.xlabel('log10(r/Mpc)')
     p.ylabel('log10(K/simulation unit)')
 
-def plot_entropy_guide(scale_factor=1.0):
+def plot_entropy_guide(z=0.4, scale_factor=1.0, color='orange'):
     mass_ar = np.linspace(12.5, 14.5, 50)
-    entrop_in = vs.entropy(10**mass_ar, z=0.4)
-    p.plot(mass_ar, scale_factor * internal_to_keV_cm2 * entrop_in, color='orange', linestyle=':', label="Virial")
+    entrop_in = vs.entropy(10**mass_ar, z=z)
+    p.plot(mass_ar, scale_factor * internal_to_keV_cm2 * entrop_in, color=color, linestyle=':', label="Virial")
 
 def plot_temp_guide():
     mass_ar = np.linspace(12.5, 14.5, 50)
@@ -404,8 +404,6 @@ def make_binned_by_mass_plot(property_name, weight_property_name = None,
         print(f"Fitted power-law: log_10 {property_name} = {popt[0]:.3f} + {popt[1]:.3f} * log_10 {bin_name}")
 
     p.xlabel(f'log10({bin_name})')
-    p.ylabel(property_name)
-    p.title(f'{property_name} binned by {bin_name}')
 
 def tabulate_by_mass(property_name, weight_property_name = None, bin_name='M200m()', num_bins=15, bin_range=(12.5, 14.5),
                      mask_property_name = None, mask_property_value = None,
