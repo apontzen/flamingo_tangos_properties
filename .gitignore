@@ -5,3 +5,5 @@ L02*
 *.pdf
 *.png
 *.csv
+*.hdf5
+.DS_Store
