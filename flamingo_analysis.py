@@ -10,6 +10,7 @@ from scipy.interpolate import RegularGridInterpolator
 # For entropy:
 # internal units are Msol^{-2/3} kpc^2 km^2 s^{-2}
 # multiply by mu mu_e^{2/3} m_p^(5/3) and convert to get keV cm^2 (mu = 0.59)
+# i.e. ((u.Msol**(-2,3)*u.kpc**2*u.km**2/u.s**2)*u.m_p**(5,3)).in_units("keV cm^2")*mu*mu_e**0.66666
 internal_to_keV_cm2 = 0.570304
 
 
