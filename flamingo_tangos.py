@@ -54,6 +54,16 @@ def _cosmic_baryon_density(redshift):
     return rho_crit * OmegaB0 * (1 + redshift)**3
 
 
+class XFableInputHandler(tangos.input_handlers.pynbody.Gadget4HDFSubfindInputHandler):
+    patterns = ['snapdir_*/snap_???.0.hdf5']
+
+    def _transform_extension(self, name):
+        return name[:-7]
+
+@pynbody.snapshot.gadgethdf.GadgetHDFSnap.derived_array
+def Entropies(f):
+    return f['p']/f['rho']**(5,3)
+    
 class FlamingoInputHandler(tangos.input_handlers.pynbody.Gadget4HDFSubfindInputHandler):
     patterns = ['flamingo_00??.hdf5']
     auxiliary_file_patterns = ['fof_output_*.hdf5']
@@ -485,7 +495,18 @@ class FlamingoDensityProfileBase(spherical_region.SphericalRegionPropertyCalcula
             data.gas['rho']
             data.gas['p']
             data.gas['cs'].convert_units('km s^-1')
+
+            # For X-FABLE Zero the flamingo-specific things
             entropy_rate_unit = pynbody.units.Unit("Msol^-2/3 kpc^2 km^2 s^-2 Myr^-1")
+
+            for k in ('entropy_generation_rate', 'viscous_entropy_rate', 'conduction_entropy_rate'):
+                data.gas[k] = 0.0
+                data.gas[k].units = entropy_rate_unit
+
+            data.gas['ps20_cooling_time'] = 0.0
+            data.gas.units = 'Gyr'
+            # end X-FABLE customisation
+            
             data.gas['entropy_generation_rate'].convert_units(entropy_rate_unit)
             data.gas['viscous_entropy_rate'].convert_units(entropy_rate_unit)
             data.gas['conduction_entropy_rate'].convert_units(entropy_rate_unit)
