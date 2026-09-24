@@ -711,8 +711,11 @@ def make_profile_plots(v, tsnum=8, box="L0200N0720_HYDRO_FIDUCIAL",
     global ranges, mass_name 
     if ranges_override is None:
         ranges_override = ranges
-    
-    timestep_name = f"{box}/%{tsnum}.hdf5"
+
+    if tsnum is not None:
+        timestep_name = f"{box}/%{tsnum}.hdf5"
+    else:
+        timestep_name = f"{box}/%"
     z = db.get_timestep(timestep_name).redshift
     print(f"Plotting {v} profiles for {timestep_name}")
     n_panels = len(panels)

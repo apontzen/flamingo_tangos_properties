@@ -83,7 +83,7 @@ add_derived_information(redshift_lines)
 
 
 
-def entropy_comparison_plot(ts = '%360%FID%/%4.%', plot_kwargs=None, readoff_values_at=[]):
+def entropy_comparison_plot(ts = '%360%FID%/%4.%', plot_kwargs={}, readoff_values_at=[]):
     fa.make_binned_by_mass_plot(f'{fa.internal_to_keV_cm2} * at(0.0, gas_entropy_outflow_r200m_relative)', 
                                     plot_kwargs=plot_kwargs,
                                     ts_name=ts, use_band=True,
@@ -91,7 +91,7 @@ def entropy_comparison_plot(ts = '%360%FID%/%4.%', plot_kwargs=None, readoff_val
                                     readoff_values_at=readoff_values_at
                                     )
     
-def temp_comparison_plot(ts = '%360%FID%/%4.%', plot_kwargs=None):
+def temp_comparison_plot(ts = '%360%FID%/%4.%', plot_kwargs={}):
     fa.make_binned_by_mass_plot(f'at(0.0, gas_temp_outflow_r200m_relative)', 
                                     plot_kwargs=plot_kwargs,
                                     ts_name=ts, use_band=True,
@@ -99,14 +99,15 @@ def temp_comparison_plot(ts = '%360%FID%/%4.%', plot_kwargs=None):
                                     )
 
 
-def fgas_comparison_plot(ts = '%360%FID%/%4.%', plot_kwargs=None):
-    fa.make_binned_by_mass_plot(f'at(0.0, gas_mass_enclosed_r200m_relative) / at(0.0, all_mass_enclosed_r200m_relative)', 
+def fgas_comparison_plot(ts = '%360%FID%/%4.%', plot_kwargs={}, radius=1.0):
+    log_radius = np.log10(radius)
+    fa.make_binned_by_mass_plot(f'at({log_radius}, gas_mass_enclosed_r200m_relative) / at({log_radius}, all_mass_enclosed_r200m_relative)', 
                                     plot_kwargs=plot_kwargs,
                                     ts_name=ts, use_band=True,
                                     num_bins=20
                                     )
     
-def energy_comparison_plot(ts = '%360%FID%/%4.%', plot_kwargs=None):
+def energy_comparison_plot(ts = '%360%FID%/%4.%', plot_kwargs={}):
     fa.make_binned_by_mass_plot(f'at(0.0, gas_energy_outflow_r200m_relative)', 
                                     plot_kwargs=plot_kwargs,
                                     ts_name=ts, use_band=True,
