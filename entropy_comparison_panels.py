@@ -99,12 +99,13 @@ def temp_comparison_plot(ts = '%360%FID%/%4.%', plot_kwargs={}):
                                     )
 
 
-def fgas_comparison_plot(ts = '%360%FID%/%4.%', plot_kwargs={}, radius=1.0):
+def fgas_comparison_plot(ts = '%360%FID%/%4.%', plot_kwargs={}, radius=1.0, readoff_values_at=[]):
     log_radius = np.log10(radius)
     fa.make_binned_by_mass_plot(f'at({log_radius}, gas_mass_enclosed_r200m_relative) / at({log_radius}, all_mass_enclosed_r200m_relative)', 
                                     plot_kwargs=plot_kwargs,
                                     ts_name=ts, use_band=True,
-                                    num_bins=20
+                                    num_bins=20,
+                                    readoff_values_at=readoff_values_at
                                     )
     
 def energy_comparison_plot(ts = '%360%FID%/%4.%', plot_kwargs={}):
@@ -161,7 +162,7 @@ def multipanel_entropy_comparison_plot(comparison_lines, right_axis=False):
 
     p.subplot(311)
     for x in comparison_lines:
-        fgas_comparison_plot(x['folder'], x['plot_kwargs'])
+        fgas_comparison_plot(x['folder'], x['plot_kwargs'], readoff_values_at=[x['log10_mcrit']])
     p.text(0.05, 0.95, "Gas fraction at $r_{\\rm 200m}$", transform=p.gca().transAxes, verticalalignment='top', horizontalalignment='left')
     p.xlabel(r"$\log_{10}(M_{200m}/M_\odot)$")
     p.ylabel(r"$f_{\rm gas}(r_{\rm 200m})$")
