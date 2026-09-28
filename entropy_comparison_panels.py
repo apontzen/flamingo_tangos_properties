@@ -4,16 +4,17 @@ import virial_scalings as vs
 import numpy as np
 import pylab as p
 import plot_niceties as pn
+import flamingo_tangos as ft
 
 comparison_lines = [
     {'folder': '%720%FID%/%4.%', 
-     'plot_kwargs': {'color': 'grey', 'linestyle': '--', 'label': 'fid m8'},
+     'plot_kwargs': {'color': 'grey', 'linestyle': '--', 'label': 'Fid m8'},
      'dT_AGN': 10**8.07},
-    {'folder': '%360%FID%/%4.%', 'plot_kwargs': {'color': 'black', 'label': 'fid'}, 
+    {'folder': '%360%FID%/%4.%', 'plot_kwargs': {'color': 'black', 'label': 'Fid'}, 
      'dT_AGN': 10**7.95},
     {'folder': '%360%STRONGEST_AGN/%4.%', 'plot_kwargs': {'color': 'darkblue', 'label': r'fgas$-8\sigma$'}, 
      'dT_AGN': 10**8.31},
-    {'folder': '%360%WEAK_AGN/%4.%', 'plot_kwargs': {'color': 'lightblue', 'label': r'fid$+2\sigma$'}, 
+    {'folder': '%360%WEAK_AGN/%4.%', 'plot_kwargs': {'color': 'lightblue', 'label': r'Fid$+2\sigma$'}, 
      'dT_AGN': 10**7.71},
     {'folder': '%360%JETS_STRONGER_AGN/%4.%', 'plot_kwargs': {'color': 'purple', 'linestyle': '-.', 'label': r'Jet_fgas$-4\sigma$'}, 
      'v_AGN': 1995.0},
@@ -29,13 +30,13 @@ def make_redshift_lines():
     steps = [0, 1, 4, 8]
     for tsnum, c in zip(steps, colors):
         ts = f"%720%/%{tsnum}.hdf5"
-        redshift_lines.append({'folder': ts, 'plot_kwargs': {'color': c, 'label': f'fid m8 $z={db.get_timestep(ts).redshift:.1f}$'}, 
+        redshift_lines.append({'folder': ts, 'plot_kwargs': {'color': c, 'label': f'Fid m8 $z={db.get_timestep(ts).redshift:.1f}$'}, 
                                'dT_AGN': 10**8.07, })
 
     return redshift_lines
 
 
-def find_critical_mass(ts = '%360%FID%/%4.%', factor = 1.6):
+def find_critical_mass(ts = '%360%FID%/%4.%', factor = 1.7):
     """Find the critical log mass at which the outflow entropy becomes less than factor x the virial value"""
     pd = fa.tabulate_by_mass(lambda: at(0.0, gas_entropy_outflow_r200m_relative), ts_name=ts)
     log10M = pd['bin_centre'].to_numpy()
@@ -107,6 +108,13 @@ def fgas_comparison_plot(ts = '%360%FID%/%4.%', plot_kwargs={}, radius=1.0, read
                                     num_bins=20,
                                     readoff_values_at=readoff_values_at
                                     )
+
+def fgas_comparison_plot_500(ts = 'XFABLE/%198', plot_kwargs={}):
+    fa.make_binned_by_mass_plot(lambda: at(log10(r500c)-3, gas_mass_enclosed) / at(log10(r500c)-3, all_mass_enclosed),
+                                plot_kwargs=plot_kwargs,
+                                ts_name=ts, use_band=True,
+                                num_bins=20,)
+
     
 def energy_comparison_plot(ts = '%360%FID%/%4.%', plot_kwargs={}):
     fa.make_binned_by_mass_plot(f'at(0.0, gas_energy_outflow_r200m_relative)', 

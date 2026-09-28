@@ -687,7 +687,7 @@ def conduction_du_dt(sim):
         raise ValueError(f"Calculation requires consistent units but found mismatch: {check_units} != {a['vel'].units}. Try calling physical_units() first.")
     return SimArray(result, units=units)
 
-
+@pynbody.snapshot.simsnap.SimSnap.stable_derived_array
 def viscosity_du_dt(sim):
     """
     (du/dt) from artificial viscosity, Eqns 14-20, in kpc**2 s**-3.
@@ -882,7 +882,7 @@ def conduction_entropy_rate(sim):
 @pynbody.snapshot.simsnap.SimSnap.stable_derived_array
 def viscous_entropy_rate(sim):
     """dK/dt from artificial viscosity. Positive definite."""
-    return _to_kdot(sim, viscosity_du_dt(sim))
+    return _to_kdot(sim, sim['viscous_du_dt'])
 
 
 @pynbody.snapshot.simsnap.SimSnap.stable_derived_array

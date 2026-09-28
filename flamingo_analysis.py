@@ -86,7 +86,6 @@ def get_stack(property_name, M_min, M_max, M_name='M200m()', cut=None, earlier=N
     
     property_name_with_rel = f'({property_name}, log10(r200m))'
     
-    
     if earlier is not None:
         if earlier>0:
             property_name_with_rel = f"earlier({earlier}).{property_name_with_rel}"
@@ -94,11 +93,11 @@ def get_stack(property_name, M_min, M_max, M_name='M200m()', cut=None, earlier=N
             property_name_with_rel = f"later({-earlier}).{property_name_with_rel}"
 
     if weight_by:
-        profiles, r200, weights, *M_and_cutvar = ts.calculate_all(property_name_with_rel, weight_by,  *M_and_cutvar)
+        profiles, r200, weights, *M_and_cutvar = _calculate_all_or_return_none(ts, property_name_with_rel, weight_by,  *M_and_cutvar)
         
     else:
         weights = None
-        profiles, r200, *M_and_cutvar = ts.calculate_all(property_name_with_rel, *M_and_cutvar)
+        profiles, r200, *M_and_cutvar = _calculate_all_or_return_none(ts, property_name_with_rel, *M_and_cutvar, object_type=object_type)
         
 
     if cut is not None:
@@ -419,8 +418,13 @@ def tabulate_by_mass(property_name, weight_property_name = None, bin_name='M200m
     return df
 
 def _calculate_all_or_return_none(timestep, *args):
+    if 'FABLE' in timestep.simulation.basename:
+        object_type= 'group'
+    else:
+        object_type='halo'
+
     args_filtered = [a for a in args if a is not None ]
-    results_filtered = timestep.calculate_all(*args_filtered)
+    results_filtered = timestep.calculate_all(*args_filtered, object_type=object_type)
     results = []
     j = 0
     for a in args:
@@ -712,10 +716,10 @@ def make_profile_plots(v, tsnum=8, box="L0200N0720_HYDRO_FIDUCIAL",
     if ranges_override is None:
         ranges_override = ranges
 
-    if tsnum is not None:
+    if "FABLE" not in box:
         timestep_name = f"{box}/%{tsnum}.hdf5"
     else:
-        timestep_name = f"{box}/%"
+        timestep_name = f"{box}/%{tsnum}"
     z = db.get_timestep(timestep_name).redshift
     print(f"Plotting {v} profiles for {timestep_name}")
     n_panels = len(panels)
