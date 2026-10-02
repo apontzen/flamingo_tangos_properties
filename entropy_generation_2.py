@@ -882,7 +882,7 @@ def conduction_entropy_rate(sim):
 @pynbody.snapshot.simsnap.SimSnap.stable_derived_array
 def viscous_entropy_rate(sim):
     """dK/dt from artificial viscosity. Positive definite."""
-    return _to_kdot(sim, sim['viscous_du_dt'])
+    return _to_kdot(sim, sim['viscosity_du_dt'])
 
 
 @pynbody.snapshot.simsnap.SimSnap.stable_derived_array
