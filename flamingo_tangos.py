@@ -433,7 +433,7 @@ def _get_velocity_centre(data, region_sizes=['25 kpc', '50 kpc', '200 kpc']):
 
 class FlamingoEntropyProductionStat(spherical_region.SphericalRegionPropertyCalculation):
     names = "entropy_production_rate_mean", "entropy_production_rate_weighted_density", \
-            "entropy_production_rate_weighted_density_m23", "viscous_log_entropy_production_rate", \
+            "energy_production_rate_weighted_density_m23", "viscous_log_entropy_production_rate", \
             "conduction_log_entropy_production_rate"
     
 
@@ -443,8 +443,8 @@ class FlamingoEntropyProductionStat(spherical_region.SphericalRegionPropertyCalc
     def calculate(self, data, existing_properties):
         data = data.gas[pynbody.filt.Sphere(5*existing_properties['r200m'], 
                                             existing_properties['shrink_center'])]
-        mean_density = (data['mass']*data['viscous_du_dt']*data['rho']).sum()/(data['mass']*data['viscous_du_dt']).sum()
-        mean_rate = (data['mass']*data['viscous_du_dt']*data['rho']).sum()/(data['mass']*data['rho']).sum()
+        mean_density = (data['mass']*data['viscous_entropy_rate']*data['rho']).sum()/(data['mass']*data['viscous_entropy_rate']).sum()
+        mean_rate = (data['mass']*data['viscous_entropy_rate']*data['rho']).sum()/(data['mass']*data['rho']).sum()
         mean_rate_m23 = (data['mass']*data['viscous_du_dt']*data['rho']**(-2/3)).sum()/(data['mass']*data['viscous_du_dt']).sum()
         viscous_log = self.const * (data['mass'] * (data['viscous_entropy_rate']/data['Entropies']).in_units("Myr^-1")).sum()
         conduction_log = self.const * (data['mass'] * (data['conduction_entropy_rate']/data['Entropies']).in_units("Myr^-1")).sum()
