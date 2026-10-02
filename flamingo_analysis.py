@@ -385,7 +385,7 @@ def make_binned_by_mass_plot(property_name, weight_property_name = None,
         
         for x, y, yerr_pos, yerr_neg in zip(readoff_values_at, readoff_values, readoff_range_positive, readoff_range_negative):
             print(f"At {bin_name} = 10^{x:.2f}, value = {y:.3e} (+{yerr_pos:.3e}/-{yerr_neg:.3e})")
-            p.plot(x, y, 'o', color=plot_kwargs.get('color', None))
+            p.plot(x, y, 'o', color=plot_kwargs.get('color', None), zorder=plot_kwargs.get('zorder', None))
 
     if with_fit:
         def power_law_model(log_mass, offset, alpha):

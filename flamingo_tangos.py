@@ -20,11 +20,13 @@ REGION_RADIUS_TOLERANCE = 1.1 # expansion factor for radius of spherical region 
 
 __version__ = "0.1.0"
 
-def _cosmic_hubble(redshift):
-    H0 = 68.1
-    OmegaM0 = 0.306
-    OmegaL0 = 1.-OmegaM0
+H0 = 68.1
+OmegaM0 = 0.306
+OmegaL0 = 1.-OmegaM0
+OmegaC0 = 0.306 - 0.0486
+OmegaB0 = 0.0486
 
+def _cosmic_hubble(redshift):
     H_z = H0 * np.sqrt(OmegaM0 * (1 + redshift)**3 + OmegaL0)
     return H_z
 
@@ -38,20 +40,18 @@ def _cosmic_crit_density_0():
     return _cosmic_crit_density(redshift=0.0)
 
 def _cosmic_mean_density(redshift):
-    OmegaM0 = 0.306
     rho_crit = _cosmic_crit_density_0()
     return rho_crit * OmegaM0 * (1 + redshift)**3
 
 
 def _cosmic_dm_density(redshift):
-    OmegaC0 = 0.306 - 0.0486
     rho_crit = _cosmic_crit_density_0()
     return rho_crit * OmegaC0 * (1 + redshift)**3
 
 def _cosmic_baryon_density(redshift):
-    OmegaB0 = 0.0486
     rho_crit = _cosmic_crit_density_0()
     return rho_crit * OmegaB0 * (1 + redshift)**3
+
 
 
 class XFableInputHandler(tangos.input_handlers.pynbody.Gadget4HDFSubfindInputHandler):
@@ -361,6 +361,18 @@ class M200m(LiveHaloProperties):
 
     def requires_property(self):
         return super().requires_property() + ['r200m']
+
+class M500c(LiveHaloProperties):
+    names = "M500c"
+
+    def calculate(self, data, existing_properties):
+        # convert r200m to M200m
+        r500c = existing_properties['r500c']
+        return (4./3) * 3.141592653589793 * r500c**3 * 500 * \
+              _cosmic_crit_density(existing_properties.timestep.redshift)
+
+    def requires_property(self):
+        return super().requires_property() + ['r500c']
 
 class R200mDot(LiveHaloProperties):
     names = "r200m_dot", "r200m_dot_denominator"

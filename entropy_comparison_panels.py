@@ -5,6 +5,7 @@ import numpy as np
 import pylab as p
 import plot_niceties as pn
 import flamingo_tangos as ft
+import pynbody
 
 comparison_lines = [
     {'folder': '%720%FID%/%4.%', 
@@ -66,8 +67,13 @@ def add_derived_information(comparisons_list):
 
     for item in comparisons_list:
         ts = item['folder']
-        crit_mass = find_critical_mass(ts=ts)
-        item['log10_mcrit'] = crit_mass
+        if "JETS/" not in ts:
+            crit_mass = find_critical_mass(ts=ts)
+            item['log10_mcrit'] = crit_mass 
+        else:
+            item['log10_mcrit'] = 12.6
+
+        
 
 
 
@@ -130,6 +136,10 @@ def zeta_comparison_plot(ts = None, plot_kwargs=None, v_AGN=None, readoff_values
             den_expr = (200 * ft._cosmic_baryon_density(db.get_timestep(ts).redshift))**-0.666666
         case 'measured':
             den_expr = lambda: energy_production_rate_weighted_density_m23
+        case 'fgas':
+            fgas = lambda: at(0.0, gas_mass_enclosed_r200m_relative) / M200m()
+            den_vir = (200 * ft._cosmic_mean_density(db.get_timestep(ts).redshift))
+            den_expr = lambda: (den_vir * fgas)**-0.666666
         case _:
             raise ValueError(f"shock_density must be 'virial' or 'measured', got {shock_density}")
         
@@ -138,7 +148,7 @@ def zeta_comparison_plot(ts = None, plot_kwargs=None, v_AGN=None, readoff_values
             entropy_scale = vs.entropy(1e10, z=db.get_timestep(ts).redshift)
             inflow_entrop_expr = lambda: entropy_scale*(M200m()/1e10)**0.66666666
         case 'measured':
-            inflow_entrop_expr = lambda: at(0.0, gas_entropy_inflow_r200m_relative)
+            inflow_entrop_expr = lambda: at(-0.3, gas_entropy_inflow_r200m_relative)
         case 'none':
             inflow_entrop_expr = 0.0
         case _:
@@ -151,7 +161,7 @@ def zeta_comparison_plot(ts = None, plot_kwargs=None, v_AGN=None, readoff_values
             G = pynbody.units.Unit("G").in_units("km^2 s^-2 Msol^-1 kpc")
             abs_v_in_expr = lambda: sqrt(G * M200m()/r200m)
         case 'measured':
-            abs_v_in_expr = lambda: abs(at(0.0, gas_vr_inflow_r200m_relative))
+            abs_v_in_expr = lambda: abs(at(-0.3, gas_vr_inflow_r200m_relative))
         case 'none':
             abs_v_in_expr = 0.0
         case _:
@@ -211,15 +221,17 @@ def multipanel_entropy_comparison_plot(comparison_lines, right_axis=False):
     p.subplot(313)
     p.text(0.05, 0.95, "AGN thermalisation parameter", transform=p.gca().transAxes, verticalalignment='top', horizontalalignment='left')
     for x in comparison_lines:
-        zeta_comparison_plot(x['folder'], x['plot_kwargs'], v_AGN=x['v_AGN'], readoff_values_at=[x['log10_mcrit']])
+        zeta_comparison_plot(x['folder'], x['plot_kwargs'], 
+                             v_AGN=x['v_AGN'], shock_density='fgas',
+                             readoff_values_at=[x['log10_mcrit']])
     p.ylabel(r"$\zeta_{\rm eff}$")
-    p.ylim(0,0.5)
+    p.ylim(0,1.0)
     p.xlabel(r"$\log_{10} M_{200m}/M_\odot$")
     p.title("")
     pn.lower_mass_axis()
     p.legend(
             loc='upper left',
-            bbox_to_anchor=(12.52, 0.91*0.5),
+            bbox_to_anchor=(12.52, 0.89),
             bbox_transform=p.gca().transData,
             ncol=2,
             columnspacing=0.8,
