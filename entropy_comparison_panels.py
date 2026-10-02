@@ -129,7 +129,7 @@ def zeta_comparison_plot(ts = None, plot_kwargs=None, v_AGN=None, readoff_values
         case 'virial':
             den_expr = (200 * ft._cosmic_baryon_density(db.get_timestep(ts).redshift))**-0.666666
         case 'measured':
-            den_expr = lambda: entropy_production_rate_weighted_density_m23
+            den_expr = lambda: energy_production_rate_weighted_density_m23
         case _:
             raise ValueError(f"shock_density must be 'virial' or 'measured', got {shock_density}")
         
@@ -213,13 +213,13 @@ def multipanel_entropy_comparison_plot(comparison_lines, right_axis=False):
     for x in comparison_lines:
         zeta_comparison_plot(x['folder'], x['plot_kwargs'], v_AGN=x['v_AGN'], readoff_values_at=[x['log10_mcrit']])
     p.ylabel(r"$\zeta_{\rm eff}$")
-    p.ylim(0,1.05)
+    p.ylim(0,0.5)
     p.xlabel(r"$\log_{10} M_{200m}/M_\odot$")
     p.title("")
     pn.lower_mass_axis()
     p.legend(
             loc='upper left',
-            bbox_to_anchor=(12.52, 0.91),
+            bbox_to_anchor=(12.52, 0.91*0.5),
             bbox_transform=p.gca().transData,
             ncol=2,
             columnspacing=0.8,
