@@ -118,7 +118,7 @@ def fgas_comparison_plot(ts = '%360%FID%/%4.%', plot_kwargs={}, radius=1.0, read
 def fgas_comparison_plot_500(ts = 'XFABLE/%198', plot_kwargs={}):
     fa.make_binned_by_mass_plot(lambda: at(log10(r500c)-3, gas_mass_enclosed) / at(log10(r500c)-3, all_mass_enclosed),
                                 plot_kwargs=plot_kwargs,
-                                ts_name=ts, use_band=True,
+                                ts_name=ts, use_band=True, bin_name='M500c()',
                                 num_bins=20,)
 
     

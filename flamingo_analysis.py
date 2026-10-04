@@ -93,11 +93,11 @@ def get_stack(property_name, M_min, M_max, M_name='M200m()', cut=None, earlier=N
             property_name_with_rel = f"later({-earlier}).{property_name_with_rel}"
 
     if weight_by:
-        profiles, r200, weights, *M_and_cutvar = _calculate_all_or_return_none(ts, property_name_with_rel, weight_by,  *M_and_cutvar)
+        profiles, r200, weights, *M_and_cutvar = ts.calculate_all(property_name_with_rel, weight_by,  *M_and_cutvar)
         
     else:
         weights = None
-        profiles, r200, *M_and_cutvar = _calculate_all_or_return_none(ts, property_name_with_rel, *M_and_cutvar, object_type=object_type)
+        profiles, r200, *M_and_cutvar = ts.calculate_all(property_name_with_rel, *M_and_cutvar)
         
 
     if cut is not None:
