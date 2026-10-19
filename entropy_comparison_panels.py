@@ -38,7 +38,7 @@ def make_redshift_lines():
 
 
 def find_critical_mass(ts = '%360%FID%/%4.%', factor = 1.7):
-    """Find the critical log mass at which the outflow entropy becomes less than factor x the virial value"""
+    "Find the critical log mass at which the outflow entropy becomes less than factor x the virial value"
     pd = fa.tabulate_by_mass(lambda: at(0.0, gas_entropy_outflow_r200m_relative), ts_name=ts)
     log10M = pd['bin_centre'].to_numpy()
     entropy = pd['mean'].to_numpy()
@@ -57,6 +57,28 @@ def find_critical_mass(ts = '%360%FID%/%4.%', factor = 1.7):
     y0, y1 = entropy_offset[crossing], entropy_offset[crossing + 1]
     return x0 + (x1 - x0) * (-y0) / (y1 - y0)
 
+
+"""
+def find_critical_mass(ts = '%360%FID%/%4.%'):
+    "Find the critical log mass at which the gas outflow equals gas inflow rate at r200m"
+    pd = fa.tabulate_by_mass(lambda: at(0.0, gas_mdot_outflow_r200m_relative) + at(0.0, gas_mdot_inflow_r200m_relative), ts_name=ts)
+    log10M = pd['bin_centre'].to_numpy()
+    mdot_diff = pd['mean'].to_numpy()
+
+    print(ts)
+    print(f"log10M: {log10M}")
+    print(f"mdot_diff: {mdot_diff}")
+
+    if mdot_diff[0] < 0:
+        return log10M[0]
+    if mdot_diff[-1] > 0:
+        return log10M[-1]
+    
+    crossing = np.where(np.diff(np.sign(mdot_diff)) < 0)[0][0]
+    x0, x1 = log10M[crossing], log10M[crossing + 1]
+    y0, y1 = mdot_diff[crossing], mdot_diff[crossing + 1]
+    return x0 + (x1 - x0) * (-y0) / (y1 - y0)
+"""
 
 def add_derived_information(comparisons_list):
     """Convert dT_AGN to v_AGN using eq 11 in paper (with zeta=1)"""
@@ -176,9 +198,9 @@ def zeta_comparison_plot(ts = None, plot_kwargs=None, v_AGN=None, readoff_values
 
 
 def multipanel_entropy_comparison_plot(comparison_lines, right_axis=False):
-    p.figure(figsize=(6.9, 5.2*2.5))
+    p.figure(figsize=(6.9, 5.2*2))
 
-    p.subplot(311)
+    p.subplot(211)
     for x in comparison_lines:
         fgas_comparison_plot(x['folder'], x['plot_kwargs'], readoff_values_at=[x['log10_mcrit']])
     p.text(0.05, 0.95, "Gas fraction at $r_{\\rm 200m}$", transform=p.gca().transAxes, verticalalignment='top', horizontalalignment='left')
@@ -194,7 +216,7 @@ def multipanel_entropy_comparison_plot(comparison_lines, right_axis=False):
 
 
 
-    p.subplot(312)
+    p.subplot(212)
     for x in comparison_lines:
         entropy_comparison_plot(x['folder'], x['plot_kwargs'], readoff_values_at=[x['log10_mcrit']])
     p.semilogy()
@@ -207,19 +229,34 @@ def multipanel_entropy_comparison_plot(comparison_lines, right_axis=False):
     if len(redshifts) == 1:
         fa.plot_entropy_guide(z=redshifts.pop(), scale_factor=1.0, color='orange')
         
-    pn.upper_mass_axis()
-    p.gca().tick_params(axis='x', which='both', labelbottom=False, labeltop=False)
-    p.gca().set_xlabel('')
+    p.ylim(45.0, 2.5e3)
+
     if right_axis:
         pn.right_axis()
     else:
         pn.left_axis()
-    p.ylim(45.0, 2.5e3)
+
+    pn.lower_mass_axis()
+
+    p.legend(
+        loc='lower right',
+        ncol=2,
+        columnspacing=0.8,
+        handletextpad=0.2,
+        handlelength=1.5,
+        facecolor='white',
+        framealpha=1.0,
+        borderpad=0.0
+    )
+
+    p.tight_layout()
+
+    
     
 
 
-    p.subplot(313)
-    p.text(0.05, 0.95, "AGN thermalisation parameter", transform=p.gca().transAxes, verticalalignment='top', horizontalalignment='left')
+def zeta_eff_comparison_plot(comparison_lines, right_axis=False):
+    p.figure()
     for x in comparison_lines:
         zeta_comparison_plot(x['folder'], x['plot_kwargs'], 
                              v_AGN=x['v_AGN'], shock_density='fgas',
@@ -231,8 +268,8 @@ def multipanel_entropy_comparison_plot(comparison_lines, right_axis=False):
     pn.lower_mass_axis()
     p.legend(
             loc='upper left',
-            bbox_to_anchor=(12.52, 0.89),
-            bbox_transform=p.gca().transData,
+            #bbox_to_anchor=(12.52, 0.89),
+            #bbox_transform=p.gca().transData,
             ncol=2,
             columnspacing=0.8,
             handletextpad=0.2,
@@ -245,4 +282,41 @@ def multipanel_entropy_comparison_plot(comparison_lines, right_axis=False):
         pn.left_axis()
 
     p.tight_layout()
-    p.subplots_adjust(hspace=0)
+
+def density_deposition_plot(comparison_lines=None, weighting_basis='u', upper_axis=False):
+    rho_b_z04 = ft._cosmic_baryon_density(0.4)
+    match weighting_basis:
+        case 'u':
+            weight_property_name = 'viscous_energy_production_rate'
+            property_name = 'viscous_energy_production_rate_weighted_density_m23'
+        case 'K':
+            weight_property_name = 'entropy_production_rate_mean'
+            property_name = 'entropy_production_rate_weighted_density_m23'
+        case _:
+            raise ValueError(f"weighting_basis must be 'u' or 'K', got {weighting_basis}")
+    
+    if comparison_lines is None:
+        comparison_lines = globals()['comparison_lines']
+
+    for x in comparison_lines:
+        fa.make_binned_by_mass_plot(property_name,
+                                        weight_property_name=weight_property_name, 
+                                        ts_name=x['folder'],
+                                        y_transform_function = lambda x : (x**-1.5) / rho_b_z04,
+                                        plot_kwargs=x['plot_kwargs'],
+                                        readoff_values_at=[x['log10_mcrit']], 
+                                        split_at=x['log10_mcrit'])
+    
+    
+    p.axhline(200, color='k', ls=':') # , label=r"$\rho_{b}(z=0.4) \times 200$")
+    p.ylabel(rf"$\langle \rho_{{\rm gas}}^{{-2/3}}\rangle_{{\dot{{{weighting_basis}}}}}^{{-3/2}} / \bar{{\rho}}_{{\rm b}}$")
+    rho_b_z04 = ft._cosmic_baryon_density(0.4)
+
+    if upper_axis:
+        pn.upper_mass_axis()
+    else:
+        pn.lower_mass_axis()
+    p.title("")
+    p.semilogy()
+    p.yticks([20, 50, 100, 200, 500], ["20", "50", "100", "200", "500"])
+    p.ylim(25, 800)
