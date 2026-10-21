@@ -62,9 +62,9 @@ def radial_ticks(relative=True):
         p.axvline(2.0, color='#ddd', linestyle='-', zorder=0)
         
 
-def mass_ticks():
+def mass_ticks(definition='200m'):
     p.xticks([12.5, 13.0, 13.5, 14.0, 14.5], ['$10^{12.5}$', '$10^{13.0}$', '$10^{13.5}$', '$10^{14.0}$', '$10^{14.5}$'])
-    p.xlabel(r"$M_{200\rm m} / {\rm M_\odot}$")
+    p.xlabel(rf"$M_{{{definition}}} / {{\rm M_\odot}}$")
 
 def upper_axis():
     p.gca().xaxis.set_ticks_position('top')
@@ -102,9 +102,9 @@ def lower_radial_axis(relative=True):
     lower_axis()
     radial_ticks(relative=relative)
 
-def lower_mass_axis():
+def lower_mass_axis(definition='200m'):
     lower_axis()
-    mass_ticks()
+    mass_ticks(definition=definition)
 
 def upper_mass_axis():
     upper_axis()

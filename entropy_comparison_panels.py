@@ -128,21 +128,21 @@ def temp_comparison_plot(ts = '%360%FID%/%4.%', plot_kwargs={}):
                                     )
 
 
-def fgas_comparison_plot(ts = '%360%FID%/%4.%', plot_kwargs={}, radius=1.0, readoff_values_at=[]):
+def fgas_comparison_plot(ts = '%360%FID%/%4.%', plot_kwargs={}, radius=1.0, readoff_values_at=[], bin_name='M200m()', num_bins=20):
     log_radius = np.log10(radius)
     fa.make_binned_by_mass_plot(f'at({log_radius}, gas_mass_enclosed_r200m_relative) / at({log_radius}, all_mass_enclosed_r200m_relative)', 
                                     plot_kwargs=plot_kwargs,
                                     ts_name=ts, use_band=True,
-                                    num_bins=20,
+                                    num_bins=num_bins,
+                                    bin_name=bin_name,
                                     readoff_values_at=readoff_values_at
                                     )
 
-def fgas_comparison_plot_500(ts = 'XFABLE/%198', plot_kwargs={}):
+def fgas_comparison_plot_500(ts = 'XFABLE/%198', num_bins=20, plot_kwargs={}, bin_name='M500c()'):
     fa.make_binned_by_mass_plot(lambda: at(log10(r500c)-3, gas_mass_enclosed) / at(log10(r500c)-3, all_mass_enclosed),
                                 plot_kwargs=plot_kwargs,
-                                ts_name=ts, use_band=True, bin_name='M500c()',
-                                num_bins=20,)
-
+                                ts_name=ts, use_band=True, bin_name=bin_name,
+                                num_bins=num_bins)
     
 def energy_comparison_plot(ts = '%360%FID%/%4.%', plot_kwargs={}):
     fa.make_binned_by_mass_plot(f'at(0.0, gas_energy_outflow_r200m_relative)', 
