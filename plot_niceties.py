@@ -72,7 +72,7 @@ def upper_axis():
     p.gca().xaxis.set_ticks_position('both')
     p.gca().set_xlabel(
         p.gca().get_xlabel(),
-        labelpad=4
+        labelpad=8
     )
 
 def lower_axis():

@@ -15,7 +15,7 @@ comparison_lines = [
      'dT_AGN': 10**7.95},
     {'folder': '%360%STRONGEST_AGN/%4.%', 'plot_kwargs': {'color': 'darkblue', 'label': r'fgas$-8\sigma$'}, 
      'dT_AGN': 10**8.31},
-    {'folder': '%360%WEAK_AGN/%4.%', 'plot_kwargs': {'color': 'lightblue', 'label': r'Fid$+2\sigma$'}, 
+    {'folder': '%360%WEAK_AGN/%4.%', 'plot_kwargs': {'color': 'lightblue', 'label': r'fgas$+2\sigma$'}, 
      'dT_AGN': 10**7.71},
     {'folder': '%360%JETS_STRONGER_AGN/%4.%', 'plot_kwargs': {'color': 'purple', 'linestyle': '-.', 'label': r'Jet_fgas$-4\sigma$'}, 
      'v_AGN': 1995.0},
