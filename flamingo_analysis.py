@@ -339,7 +339,7 @@ def make_binned_by_mass_plot(property_name, weight_property_name = None,
                              error_range: str | tuple ='uncertainty-bootstrap',
                              mask_property_name = None, mask_property_value = None,
                              use_band = True, with_fit=False, fit_range=None,
-                             x_offset=0.0, readoff_values_at=None,
+                             x_offset=0.0, readoff_values_at=None, plot_readoff_values=True,
                              split_at=None,
                              y_transform_function = lambda y: y):
     bin_centers, binned_means, binned_range_positive, binned_range_negative = _get_binned_statistics(property_name, weight_property_name, mask_property_name, mask_property_value, bin_name, num_bins, bin_range, ts_name, error_range)
@@ -382,10 +382,13 @@ def make_binned_by_mass_plot(property_name, weight_property_name = None,
         readoff_values = y_transform_function(readoff_values)
         readoff_range_positive = y_transform_function(readoff_range_positive)
         readoff_range_negative = y_transform_function(readoff_range_negative)
-        
-        for x, y, yerr_pos, yerr_neg in zip(readoff_values_at, readoff_values, readoff_range_positive, readoff_range_negative):
-            print(f"At {bin_name} = 10^{x:.2f}, value = {y:.3e} (+{yerr_pos:.3e}/-{yerr_neg:.3e})")
-            p.plot(x, y, 'o', color=plot_kwargs.get('color', None), zorder=plot_kwargs.get('zorder', None))
+
+        if plot_readoff_values:
+            for x, y, yerr_pos, yerr_neg in zip(readoff_values_at, readoff_values, readoff_range_positive, readoff_range_negative):
+                print(f"At {bin_name} = 10^{x:.2f}, value = {y:.3e} (+{yerr_pos:.3e}/-{yerr_neg:.3e})")
+                p.plot(x, y, 'o', color=plot_kwargs.get('color', None), zorder=plot_kwargs.get('zorder', None))
+        else:
+            return readoff_values
 
     if with_fit:
         def power_law_model(log_mass, offset, alpha):
@@ -843,14 +846,14 @@ def add_cosmic_mean_flow(tsnum=8, box="L0200N0360_HYDRO_FIDUCIAL", particle=None
 def make_stacked_entropy_image_plot(timestep_name, axis='13', M_min=12.8, M_max=13.2,
                                     vmin=1.7, vmax=3.0, cmap='RdYlBu_r', 
                                     with_colorbar=False, with_quiverkey=False, panel_label=None):
-    mean, _, _, _, _ = get_stack(f'aligned_{axis}_entropy_image', timestep_name=timestep_name, M_min=M_min, M_max=M_max, bootstrap=False)
+    mean, _, _, _, _, _ = get_stack(f'aligned_{axis}_entropy_image', timestep_name=timestep_name, M_min=M_min, M_max=M_max, bootstrap=False)
     
     mean*=internal_to_keV_cm2
 
     p.imshow(np.log10(mean), origin='lower', extent=(-2,2,-2,2), vmin=vmin, vmax=vmax, cmap=cmap)
 
-    mean_vx, _, _, _, _ = get_stack(f'aligned_{axis}_vx_image', timestep_name=timestep_name, M_min=M_min, M_max=M_max, bootstrap=False)
-    mean_vy, _, _, _, _ = get_stack(f'aligned_{axis}_vy_image', timestep_name=timestep_name, M_min=M_min, M_max=M_max, bootstrap=False)
+    mean_vx, _, _, _, _, _ = get_stack(f'aligned_{axis}_vx_image', timestep_name=timestep_name, M_min=M_min, M_max=M_max, bootstrap=False)
+    mean_vy, _, _, _, _, _ = get_stack(f'aligned_{axis}_vy_image', timestep_name=timestep_name, M_min=M_min, M_max=M_max, bootstrap=False)
     axis_names = {'1': 'z', '2': 'y', '3': 'x'}
     axis_name_x = axis_names[axis[1]]
     axis_name_y = axis_names[axis[0]]
